@@ -281,7 +281,7 @@ export function VisorPdf({ pdfUrl, salto }: Props) {
   }, [salto, pdfDoc]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-white">
+    <div className="flex h-full min-h-0 flex-col bg-surface">
       <div className="material-chrome-white z-10 flex shrink-0 items-center justify-end border-b border-line/70 px-3 py-1.5 shadow-soft">
         <a
           href={pdfUrl}
@@ -315,6 +315,8 @@ export function VisorPdf({ pdfUrl, salto }: Props) {
                   if (el) paginaRefs.current.set(num, el);
                   else paginaRefs.current.delete(num);
                 }}
+                // bg-white a propósito (no bg-surface): simula la hoja de
+                // papel del PDF, que es blanca sin importar el tema de la app.
                 className="relative bg-white shadow-elevated"
               >
                 <canvas

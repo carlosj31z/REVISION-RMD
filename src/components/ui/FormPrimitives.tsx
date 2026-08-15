@@ -58,7 +58,7 @@ export function InputArchivo({
 
   if (file) {
     return (
-      <div className="flex items-center gap-3 rounded-lg border border-line bg-white px-3.5 py-3 shadow-soft transition-all duration-200 ease-spring">
+      <div className="flex items-center gap-3 rounded-lg border border-line bg-surface px-3.5 py-3 shadow-soft transition-all duration-200 ease-spring">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-system-tint text-system">
           <IconoPdf />
         </span>
@@ -104,12 +104,12 @@ export function InputArchivo({
       className={`flex cursor-pointer items-center gap-3 rounded-lg border border-dashed px-3.5 py-3.5 text-[13px] transition-all duration-200 ease-spring ${
         arrastrando
           ? "scale-[1.01] border-system bg-system-tint text-system shadow-soft"
-          : "border-line bg-white text-muted hover:border-system/60 hover:bg-system-tint/40 hover:text-system"
+          : "border-line bg-surface text-muted hover:border-system/60 hover:bg-system-tint/40 hover:text-system"
       }`}
     >
       <span
         className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors ${
-          arrastrando ? "bg-white text-system" : "bg-paper text-muted"
+          arrastrando ? "bg-surface text-system" : "bg-paper text-muted"
         }`}
       >
         <IconoSubir />
@@ -143,7 +143,7 @@ export function ToggleModo({
       type="button"
       onClick={onClick}
       className={`rounded px-3 py-1 text-[11px] font-medium transition-all duration-200 ease-spring active:scale-95 ${
-        activo ? "bg-white text-system shadow-soft" : "text-muted hover:text-ink"
+        activo ? "bg-surface text-system shadow-soft" : "text-muted hover:text-ink"
       }`}
     >
       {label}

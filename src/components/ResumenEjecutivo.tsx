@@ -13,7 +13,7 @@ export function ResumenEjecutivo({ texto }: { texto: string }) {
   if (!texto) return null;
 
   return (
-    <div className="mb-4 animate-fade-in-up rounded-lg border border-line bg-white transition-shadow duration-200 hover:shadow-soft">
+    <div className="mb-4 animate-fade-in-up rounded-lg border border-line bg-surface transition-shadow duration-200 hover:shadow-soft">
       <button
         onClick={() => setAbierto((v) => !v)}
         className="flex w-full items-center justify-between px-3 py-2.5 text-left"

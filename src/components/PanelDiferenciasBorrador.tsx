@@ -130,7 +130,7 @@ export function PanelDiferenciasBorrador({
             {resultado.alertasCoherencia.map((alerta, i) => (
               <div
                 key={i}
-                className="animate-fade-in-up rounded-lg border border-line bg-white px-3 py-2.5 transition-shadow duration-200 hover:shadow-soft"
+                className="animate-fade-in-up rounded-lg border border-line bg-surface px-3 py-2.5 transition-shadow duration-200 hover:shadow-soft"
                 style={{ animationDelay: `${Math.min(i, 6) * 30}ms` }}
               >
                 <div className="mb-1 flex items-center justify-between gap-2">
@@ -153,7 +153,7 @@ export function PanelDiferenciasBorrador({
         )}
 
         {diferenciasReales.length === 0 ? (
-          <div className="animate-scale-in rounded-lg border border-dashed border-line bg-white px-4 py-10 text-center">
+          <div className="animate-scale-in rounded-lg border border-dashed border-line bg-surface px-4 py-10 text-center">
             <span className="mx-auto mb-2.5 flex h-9 w-9 items-center justify-center rounded-full bg-system-tint text-system">
               <IconoCheck />
             </span>
@@ -238,7 +238,7 @@ function TarjetaDiferencia({
       onClick={onIrAPaso}
       title="Ver en el PDF"
       style={{ animationDelay: `${retraso}ms` }}
-      className={`group animate-fade-in-up cursor-pointer rounded-lg border bg-white px-3.5 py-3 shadow-soft transition-all duration-200 ease-spring hover:shadow-elevated ${BORDE_ESTADO[estado]} ${
+      className={`group animate-fade-in-up cursor-pointer rounded-lg border bg-surface px-3.5 py-3 shadow-soft transition-all duration-200 ease-spring hover:shadow-elevated ${BORDE_ESTADO[estado]} ${
         activo ? "border-system shadow-elevated" : "border-line"
       } ${diferencia.involucraEquipoRetirado ? "ring-1 ring-severidad-critica/40" : ""}`}
     >
@@ -361,7 +361,7 @@ function BotonEstado({
       className={`rounded border px-2 py-1 text-[11px] font-medium transition-all duration-150 ease-spring active:scale-95 ${
         activo
           ? "border-system bg-system text-white"
-          : "border-line bg-white text-muted hover:border-system hover:text-system"
+          : "border-line bg-surface text-muted hover:border-system hover:text-system"
       }`}
     >
       {label}

@@ -2,22 +2,97 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   Tokens de color — light (por defecto) y dark (data-theme="dark").
+   Todo el resto de la app usa las clases de Tailwind (bg-paper, text-ink,
+   border-line, bg-surface, bg-system, text-severidad-critica, etc.) que en
+   tailwind.config.ts apuntan a estas variables — cambiar de tema acá cambia
+   toda la interfaz sin tocar un solo componente.
+   ============================================================ */
 :root {
   color-scheme: light;
+
+  --color-paper: 247 247 245; /* fondo general */
+  --color-ink: 28 28 26; /* texto principal */
+  --color-line: 222 221 214; /* bordes */
+  --color-muted: 107 106 99; /* texto secundario */
+  --color-surface: 255 255 255; /* fondo de tarjetas/inputs (antes bg-white) */
+
+  --color-system: 43 76 63; /* verde botica — acento de marca */
+  --color-system-light: 62 107 88;
+  --color-system-tint: 234 240 236;
+
+  --color-severidad-critica: 179 38 30;
+  --color-severidad-critica-tint: 251 234 233;
+  --color-severidad-alta: 199 116 0;
+  --color-severidad-alta-tint: 251 241 225;
+  --color-severidad-media: 138 109 0;
+  --color-severidad-media-tint: 248 243 222;
+  --color-severidad-baja: 92 107 115;
+  --color-severidad-baja-tint: 238 241 242;
+
+  --color-estado-pendiente: 107 106 99;
+  --color-estado-corregido: 43 76 63;
+  --color-estado-descartado: 166 164 155;
+
+  --color-scrollbar-thumb: 199 198 188;
+
+  /* Sombra oscura al 5% es invisible sobre fondo oscuro: el tema dark
+     redefine tanto el color base como las opacidades (ver más abajo). */
+  --shadow-color: 28 28 26;
+  --shadow-a1: 0.05;
+  --shadow-a2: 0.03;
+  --shadow-a3: 0.1;
+  --shadow-a4: 0.06;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-paper: 20 21 19;
+  --color-ink: 237 236 231;
+  --color-line: 54 53 47;
+  --color-muted: 154 152 140;
+  --color-surface: 31 32 29;
+
+  --color-system: 108 173 144;
+  --color-system-light: 130 194 165;
+  --color-system-tint: 30 43 37;
+
+  --color-severidad-critica: 224 110 100;
+  --color-severidad-critica-tint: 46 26 24;
+  --color-severidad-alta: 224 160 84;
+  --color-severidad-alta-tint: 44 34 18;
+  --color-severidad-media: 199 172 84;
+  --color-severidad-media-tint: 40 35 16;
+  --color-severidad-baja: 148 162 169;
+  --color-severidad-baja-tint: 30 34 36;
+
+  --color-estado-pendiente: 154 152 140;
+  --color-estado-corregido: 108 173 144;
+  --color-estado-descartado: 96 94 86;
+
+  --color-scrollbar-thumb: 64 63 56;
+
+  --shadow-color: 0 0 0;
+  --shadow-a1: 0.4;
+  --shadow-a2: 0.3;
+  --shadow-a3: 0.55;
+  --shadow-a4: 0.4;
 }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #C7C6BC transparent;
+  scrollbar-color: rgb(var(--color-scrollbar-thumb)) transparent;
 }
 
 ::selection {
-  background-color: #2B4C3F;
-  color: #F7F7F5;
+  background-color: rgb(var(--color-system));
+  color: rgb(var(--color-paper));
 }
 
 :focus-visible {
-  outline: 2px solid #2B4C3F;
+  outline: 2px solid rgb(var(--color-system));
   outline-offset: 2px;
 }
 
@@ -32,13 +107,13 @@
 /* Cabeceras/barras "flotantes": la superficie translúcida separa la
    estructura sin bloquear el flujo — el contenido sigue leyéndose debajo. */
 .material-chrome {
-  background-color: rgba(247, 247, 245, 0.82);
+  background-color: rgb(var(--color-paper) / 0.82);
   backdrop-filter: blur(16px) saturate(160%);
   -webkit-backdrop-filter: blur(16px) saturate(160%);
 }
 
 .material-chrome-white {
-  background-color: rgba(255, 255, 255, 0.78);
+  background-color: rgb(var(--color-surface) / 0.78);
   backdrop-filter: blur(16px) saturate(160%);
   -webkit-backdrop-filter: blur(16px) saturate(160%);
 }
@@ -46,7 +121,7 @@
 @media (prefers-reduced-transparency: reduce) {
   .material-chrome,
   .material-chrome-white {
-    background-color: #f7f7f5;
+    background-color: rgb(var(--color-paper));
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
@@ -54,7 +129,9 @@
 
 /* Pulso de énfasis sobre una marca de resaltado ya visible en el PDF: ayuda
    a ubicar la zona de un vistazo aunque el recuadro no cubra cada palabra
-   con precisión de píxel. */
+   con precisión de píxel. Se mantiene en ámbar fijo (no depende del tema):
+   siempre se dibuja sobre el canvas del PDF, que conserva su propio fondo
+   claro sin importar el tema de la interfaz. */
 @keyframes marcaPulso {
   0%, 100% {
     box-shadow: 0 0 0 0 rgba(224, 168, 0, 0);
@@ -72,12 +149,12 @@
    ya se hizo scroll, para que el usuario sepa dónde ubicarse. */
 @keyframes paginaFlash {
   0%, 100% {
-    box-shadow: 0 8px 24px -4px rgba(28, 28, 26, 0.1), 0 2px 6px -1px rgba(28, 28, 26, 0.06),
-      0 0 0 0 rgba(43, 76, 63, 0);
+    box-shadow: 0 8px 24px -4px rgb(var(--shadow-color) / var(--shadow-a3)),
+      0 2px 6px -1px rgb(var(--shadow-color) / var(--shadow-a4)), 0 0 0 0 rgb(var(--color-system) / 0);
   }
   15% {
-    box-shadow: 0 8px 24px -4px rgba(28, 28, 26, 0.1), 0 2px 6px -1px rgba(28, 28, 26, 0.06),
-      0 0 0 5px rgba(43, 76, 63, 0.4);
+    box-shadow: 0 8px 24px -4px rgb(var(--shadow-color) / var(--shadow-a3)),
+      0 2px 6px -1px rgb(var(--shadow-color) / var(--shadow-a4)), 0 0 0 5px rgb(var(--color-system) / 0.4);
   }
 }
 .pagina-flash {

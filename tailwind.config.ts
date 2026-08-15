@@ -4,30 +4,36 @@ const config: Config = {
   content: ["./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
+      // Todos los tokens de color viven en variables CSS (ver globals.css) —
+      // así :root vs. :root[data-theme="dark"] cambia toda la paleta sin
+      // tocar una sola clase de Tailwind en los componentes. El patrón
+      // rgb(var(--x) / <alpha-value>) preserva los modificadores de opacidad
+      // de Tailwind (ej. "border-line/70") funcionando igual en ambos temas.
       colors: {
-        paper: "#F7F7F5",
-        ink: "#1C1C1A",
-        line: "#DEDDD6",
-        muted: "#6B6A63",
+        paper: "rgb(var(--color-paper) / <alpha-value>)",
+        ink: "rgb(var(--color-ink) / <alpha-value>)",
+        line: "rgb(var(--color-line) / <alpha-value>)",
+        muted: "rgb(var(--color-muted) / <alpha-value>)",
+        surface: "rgb(var(--color-surface) / <alpha-value>)", // reemplaza los bg-white usados como fondo de tarjeta/input
         system: {
-          DEFAULT: "#2B4C3F", // verde botica oscuro — acento de marca del sistema
-          light: "#3E6B58",
-          tint: "#EAF0EC",
+          DEFAULT: "rgb(var(--color-system) / <alpha-value>)", // verde botica — acento de marca del sistema
+          light: "rgb(var(--color-system-light) / <alpha-value>)",
+          tint: "rgb(var(--color-system-tint) / <alpha-value>)",
         },
         severidad: {
-          critica: "#B3261E",
-          criticaTint: "#FBEAE9",
-          alta: "#C77400",
-          altaTint: "#FBF1E1",
-          media: "#8A6D00",
-          mediaTint: "#F8F3DE",
-          baja: "#5C6B73",
-          bajaTint: "#EEF1F2",
+          critica: "rgb(var(--color-severidad-critica) / <alpha-value>)",
+          criticaTint: "rgb(var(--color-severidad-critica-tint) / <alpha-value>)",
+          alta: "rgb(var(--color-severidad-alta) / <alpha-value>)",
+          altaTint: "rgb(var(--color-severidad-alta-tint) / <alpha-value>)",
+          media: "rgb(var(--color-severidad-media) / <alpha-value>)",
+          mediaTint: "rgb(var(--color-severidad-media-tint) / <alpha-value>)",
+          baja: "rgb(var(--color-severidad-baja) / <alpha-value>)",
+          bajaTint: "rgb(var(--color-severidad-baja-tint) / <alpha-value>)",
         },
         estado: {
-          pendiente: "#6B6A63",
-          corregido: "#2B4C3F",
-          descartado: "#A6A49B",
+          pendiente: "rgb(var(--color-estado-pendiente) / <alpha-value>)",
+          corregido: "rgb(var(--color-estado-corregido) / <alpha-value>)",
+          descartado: "rgb(var(--color-estado-descartado) / <alpha-value>)",
         },
       },
       fontFamily: {
@@ -41,9 +47,13 @@ const config: Config = {
         xl: "12px",
       },
       boxShadow: {
-        soft: "0 1px 2px rgba(28,28,26,0.05), 0 1px 1px rgba(28,28,26,0.03)",
-        elevated: "0 8px 24px -4px rgba(28,28,26,0.10), 0 2px 6px -1px rgba(28,28,26,0.06)",
-        ring: "0 0 0 3px rgba(43,76,63,0.14)",
+        // Color/opacidad de sombra también por variable: una sombra oscura al
+        // 5% es invisible sobre fondo oscuro, así que el tema dark usa negro
+        // puro con más opacidad (ver --shadow-* en globals.css).
+        soft: "0 1px 2px rgb(var(--shadow-color) / var(--shadow-a1)), 0 1px 1px rgb(var(--shadow-color) / var(--shadow-a2))",
+        elevated:
+          "0 8px 24px -4px rgb(var(--shadow-color) / var(--shadow-a3)), 0 2px 6px -1px rgb(var(--shadow-color) / var(--shadow-a4))",
+        ring: "0 0 0 3px rgb(var(--color-system) / 0.14)",
       },
       transitionTimingFunction: {
         // easing "resorte": arranca rápido y se asienta suave, sin rebote —

@@ -8,6 +8,7 @@ import { PanelDiscrepancias } from "@/components/PanelDiscrepancias";
 import { PanelDiferenciasBorrador } from "@/components/PanelDiferenciasBorrador";
 import { PanelReglas } from "@/components/PanelReglas";
 import { PanelDocumentosObsoletos } from "@/components/PanelDocumentosObsoletos";
+import { ToggleTema } from "@/components/ui/ToggleTema";
 import type { SaltoPdf } from "@/components/VisorPdf";
 import type {
   RMDExtraido,
@@ -427,19 +428,19 @@ export default function Home() {
             />
             <TabModo
               ref={(el) => {
-                tabRefs.current.control_cambios = el;
-              }}
-              activo={modo === "control_cambios"}
-              onClick={() => setModo("control_cambios")}
-              label="Control de Cambio"
-            />
-            <TabModo
-              ref={(el) => {
                 tabRefs.current.corregido_vs_borrador = el;
               }}
               activo={modo === "corregido_vs_borrador"}
               onClick={() => setModo("corregido_vs_borrador")}
               label="RMD Corregido"
+            />
+            <TabModo
+              ref={(el) => {
+                tabRefs.current.control_cambios = el;
+              }}
+              activo={modo === "control_cambios"}
+              onClick={() => setModo("control_cambios")}
+              label="Control de Cambio"
             />
             {indicador && (
               <div
@@ -454,6 +455,7 @@ export default function Home() {
               onClick={() => setVista({ tipo: "documentosObsoletos" })}
               label="Documentos obsoletos"
             />
+            <ToggleTema />
           </div>
         </div>
         <div className="flex-1 overflow-y-auto">
@@ -518,7 +520,7 @@ export default function Home() {
       <div className="flex h-screen items-center justify-center px-6">
         <div className="max-w-md animate-scale-in rounded-xl border border-severidad-critica/30 bg-severidad-criticaTint px-5 py-4 shadow-elevated">
           <div className="flex items-start gap-3">
-            <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-severidad-critica shadow-soft">
+            <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface text-severidad-critica shadow-soft">
               <IconoAlerta />
             </span>
             <div>
@@ -564,6 +566,7 @@ export default function Home() {
             >
               Nueva revisión
             </button>
+            <ToggleTema />
           </div>
         </div>
         {errorVerificacion && (
@@ -571,7 +574,7 @@ export default function Home() {
             <p className="text-[12.5px] text-severidad-critica">{errorVerificacion}</p>
             <button
               onClick={() => setErrorVerificacion(null)}
-              className="shrink-0 rounded px-1.5 py-0.5 text-[12px] text-severidad-critica/70 transition-colors hover:bg-white/50 hover:text-severidad-critica"
+              className="shrink-0 rounded px-1.5 py-0.5 text-[12px] text-severidad-critica/70 transition-colors hover:bg-surface/50 hover:text-severidad-critica"
             >
               ✕
             </button>
@@ -645,7 +648,7 @@ function BotonConfig({ onClick, label }: { onClick: () => void; label: string })
   return (
     <button
       onClick={onClick}
-      className="rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-muted transition-all duration-150 ease-spring hover:bg-white hover:text-system hover:shadow-soft active:scale-95"
+      className="rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-muted transition-all duration-150 ease-spring hover:bg-surface hover:text-system hover:shadow-soft active:scale-95"
     >
       ⚙ {label}
     </button>
@@ -732,7 +735,7 @@ function BarraRevisionMinimizada({
   onDescartar: () => void;
 }) {
   return (
-    <div className="fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 animate-scale-in items-center gap-3 rounded-full border border-line bg-white py-2 pl-4 pr-2 shadow-elevated">
+    <div className="fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 animate-scale-in items-center gap-3 rounded-full border border-line bg-surface py-2 pl-4 pr-2 shadow-elevated">
       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-system-tint text-system">
         <IconoPausa />
       </span>

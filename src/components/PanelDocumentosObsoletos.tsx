@@ -117,13 +117,13 @@ export function PanelDocumentosObsoletos({ onVolver }: Props) {
         </button>
       </div>
 
-      <form onSubmit={agregarDocumento} className="mb-8 rounded-xl border border-line bg-white p-4 shadow-soft">
+      <form onSubmit={agregarDocumento} className="mb-8 rounded-xl border border-line bg-surface p-4 shadow-soft">
         <label className="mb-1.5 block text-[12px] font-medium text-ink">Código del documento</label>
         <input
           value={codigo}
           onChange={(e) => setCodigo(e.target.value.toUpperCase())}
           placeholder="Ej: IPRO-P200"
-          className="w-full rounded-lg border border-line bg-white px-3 py-2 font-mono text-[13px] text-ink placeholder:font-sans placeholder:text-muted/60 transition-all duration-150 ease-spring focus:border-system focus:shadow-ring focus:outline-none"
+          className="w-full rounded-lg border border-line bg-surface px-3 py-2 font-mono text-[13px] text-ink placeholder:font-sans placeholder:text-muted/60 transition-all duration-150 ease-spring focus:border-system focus:shadow-ring focus:outline-none"
         />
         <label className="mb-1.5 mt-3 block text-[12px] font-medium text-ink">
           Motivo <span className="font-normal text-muted">(opcional)</span>
@@ -133,7 +133,7 @@ export function PanelDocumentosObsoletos({ onVolver }: Props) {
           onChange={(e) => setMotivo(e.target.value)}
           rows={2}
           placeholder="Ej: Reemplazado por IPRO-P250 desde 2026."
-          className="w-full resize-none rounded-lg border border-line bg-white px-3 py-2.5 text-[13px] leading-relaxed text-ink placeholder:text-muted/60 transition-all duration-150 ease-spring focus:border-system focus:shadow-ring focus:outline-none"
+          className="w-full resize-none rounded-lg border border-line bg-surface px-3 py-2.5 text-[13px] leading-relaxed text-ink placeholder:text-muted/60 transition-all duration-150 ease-spring focus:border-system focus:shadow-ring focus:outline-none"
         />
         <button
           type="submit"
@@ -155,7 +155,7 @@ export function PanelDocumentosObsoletos({ onVolver }: Props) {
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-line border-t-system" />
         </div>
       ) : documentos.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-line bg-white px-4 py-8 text-center">
+        <div className="rounded-lg border border-dashed border-line bg-surface px-4 py-8 text-center">
           <p className="text-[13px] text-muted">Todavía no registraste ningún documento obsoleto.</p>
         </div>
       ) : (
@@ -164,7 +164,7 @@ export function PanelDocumentosObsoletos({ onVolver }: Props) {
             <li
               key={d.id}
               style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}
-              className={`animate-fade-in-up rounded-lg border bg-white px-3.5 py-3 shadow-soft transition-all duration-200 ease-spring hover:shadow-elevated ${
+              className={`animate-fade-in-up rounded-lg border bg-surface px-3.5 py-3 shadow-soft transition-all duration-200 ease-spring hover:shadow-elevated ${
                 d.activo ? "border-line" : "border-line/60 opacity-50"
               }`}
             >
