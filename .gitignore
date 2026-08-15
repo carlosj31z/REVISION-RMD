@@ -8,6 +8,10 @@
 # Producción
 /build
 
+# Generado automáticamente en postinstall (scripts/copy-pdf-worker.js) a
+# partir de node_modules/pdfjs-dist — no versionar, se regenera en cada install.
+/public/pdf.worker.min.mjs
+
 # Variables de entorno — NUNCA subir claves reales
 .env
 .env.local

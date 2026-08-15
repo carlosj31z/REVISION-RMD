@@ -67,10 +67,14 @@ export function VisorPdf({ pdfUrl, salto }: Props) {
 
     import("pdfjs-dist")
       .then((pdfjsLib) => {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-          "pdfjs-dist/build/pdf.worker.min.mjs",
-          import.meta.url
-        ).toString();
+        // Ruta estática servida tal cual desde public/ (copiada ahí en
+        // postinstall, ver scripts/copy-pdf-worker.js) — NO usar
+        // `new URL(..., import.meta.url)` acá: eso hace que webpack empaquete
+        // el worker como asset y Next.js rompe el build de producción
+        // ("'import.meta' cannot be used outside of module code"), porque
+        // pdfjs-dist v6 distribuye el worker como módulo ESM puro y Terser
+        // no lo procesa como tal.
+        pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
         return pdfjsLib.getDocument({ url: pdfUrl }).promise;
       })
       .then((doc) => {
