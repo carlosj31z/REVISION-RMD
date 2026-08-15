@@ -64,9 +64,11 @@ const RE_INICIO_EQUIPOS = /1\.-\s*EQUIPOS\s*\/\s*INSTRUMENTOS\s*\/\s*MATERIALES/
 const RE_ENCABEZADO_PRODUCTO = /REGISTRO DE MANUFACTURA\s+(\w+)/i;
 const RE_CODIGO_VERSION =
   /(\d{10})\s+([\d/]+)\s+(\d+)\s+(Autorizado|Ingresado)\/\s*([\d-]+)\s*\/([A-Z]+)/;
-// Nomenclatura fija de documentos citados: <Tipo:I/P/F><Área:3 letras>-<letra><3 dígitos>
-// ej. "IPRO-P123" (Instructivo, área Producción), "ICBL-E200" (Instructivo, área Cápsulas Blandas).
-const RE_DOCUMENTO_REFERENCIADO = /\b([IPF])([A-Z]{3})-([A-Z]\d{3})\b/g;
+// Nomenclatura fija de documentos citados: <Tipo:I/P/F><Área:3 letras>-<letra opcional><3 dígitos>
+// ej. "IPRO-P123" (Instructivo, área Producción), "ICBL-E200" (Instructivo, área Cápsulas Blandas),
+// pero también "FPRO-205" (Formato) o "PDSG-202"/"PCPR-202" (Procedimiento) SIN esa letra —
+// en la práctica es opcional y varía por tipo/área, no solo por instructivos.
+const RE_DOCUMENTO_REFERENCIADO = /\b([IPF])([A-Z]{3})-([A-Z]?\d{3})\b/g;
 const TIPO_DOCUMENTO: Record<"I" | "P" | "F", DocumentoReferenciado["tipo"]> = {
   I: "Instructivo",
   P: "Procedimiento",
