@@ -36,6 +36,17 @@ const TIPO_LABEL: Record<DiscrepanciaDetectada["tipoDiscrepancia"], string> = {
   sin_discrepancia: "Sin discrepancia",
 };
 
+// Misma clave para render, seguimiento y verificación: "N/A" se repite en
+// cualquier hallazgo que no sea un paso puntual (precauciones, notas
+// importantes, equipos, encabezado, insumos...), así que se desambigua con
+// el índice DEL ARRAY COMPLETO (no del filtrado) — es el mismo criterio que
+// usa subirRmdCorregido en page.tsx al mapear la verificación de vuelta a
+// cada tarjeta; si difirieran, la verificación automática apuntaría a la
+// tarjeta equivocada.
+function claveDiscrepancia(d: DiscrepanciaDetectada, indiceCompleto: number): string {
+  return d.pasoId !== "N/A" ? d.pasoId : `na-${indiceCompleto}`;
+}
+
 const TIPO_ALERTA_LABEL: Record<AlertaCoherencia["tipo"], string> = {
   equipo_retirado_en_uso: "Equipo retirado en uso",
   paso_huerfano: "Paso huérfano",
@@ -64,6 +75,19 @@ export function PanelDiscrepancias({
   const verificaciones = Object.values(verificacionCorreccion);
   const totalCorregidas = verificaciones.filter((v) => v.resuelto).length;
 
+  // Score en vivo: arranca en el que calculó la IA en el análisis original y
+  // se acerca a 100 en proporción a cuántos hallazgos ya están marcados
+  // "Corregido en SAP" — a mano o automáticamente al subir el RMD corregido.
+  const corregidosEnSap = resultado.discrepanciasDetectadas.filter((d, i) => {
+    if (d.tipoDiscrepancia === "sin_discrepancia") return false;
+    return estadosSeguimiento[claveDiscrepancia(d, i)] === "corregido_en_sap";
+  }).length;
+  const scoreActual =
+    discrepanciasReales.length === 0
+      ? resultado.scoreCoherencia
+      : resultado.scoreCoherencia +
+        (corregidosEnSap / discrepanciasReales.length) * (100 - resultado.scoreCoherencia);
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-paper">
       <header className="material-chrome-white z-10 border-b border-line/70 px-5 py-4 shadow-soft">
@@ -71,7 +95,7 @@ export function PanelDiscrepancias({
           Hallazgos del control de cambios
         </p>
         <div className="mt-1.5 flex items-center gap-3">
-          <ScoreCoherencia score={resultado.scoreCoherencia} />
+          <ScoreCoherencia scoreActual={scoreActual} scoreOriginal={resultado.scoreCoherencia} />
           <span className="text-[12px] text-muted">
             {discrepanciasReales.length} discrepancia
             {discrepanciasReales.length !== 1 ? "s" : ""} detectada
@@ -140,12 +164,9 @@ export function PanelDiscrepancias({
           </div>
         ) : (
           <ol className="space-y-2.5">
-            {discrepanciasReales.map((d, i) => {
-              // "N/A" se repite en cualquier hallazgo que no sea un paso puntual
-              // (precauciones, notas importantes, equipos, encabezado, insumos...);
-              // sin un desambiguador por índice, todas esas tarjetas compartirían
-              // el mismo estado de seguimiento y resaltado.
-              const pasoClave = d.pasoId !== "N/A" ? d.pasoId : `na-${i}`;
+            {resultado.discrepanciasDetectadas.map((d, i) => {
+              if (d.tipoDiscrepancia === "sin_discrepancia") return null;
+              const pasoClave = claveDiscrepancia(d, i);
               return (
                 <TarjetaDiscrepancia
                   key={`${pasoClave}-${i}`}
@@ -168,15 +189,22 @@ export function PanelDiscrepancias({
   );
 }
 
-function ScoreCoherencia({ score }: { score: number }) {
+function ScoreCoherencia({ scoreActual, scoreOriginal }: { scoreActual: number; scoreOriginal: number }) {
+  const redondeado = Math.round(scoreActual);
   const color =
-    score >= 80 ? "text-system" : score >= 50 ? "text-severidad-alta" : "text-severidad-critica";
+    redondeado >= 80 ? "text-system" : redondeado >= 50 ? "text-severidad-alta" : "text-severidad-critica";
   return (
-    <div className="flex items-baseline gap-1">
-      <span className={`font-mono text-2xl font-semibold tabular-nums ${color}`}>
-        {Math.round(score)}
+    <div className="flex items-baseline gap-1.5">
+      <span
+        key={redondeado}
+        className={`animate-scale-in font-mono text-2xl font-semibold tabular-nums transition-colors duration-300 ${color}`}
+      >
+        {redondeado}
       </span>
       <span className="text-[11px] text-muted">/100 coherencia</span>
+      {redondeado !== Math.round(scoreOriginal) && (
+        <span className="text-[11px] text-muted/70">(inicial: {Math.round(scoreOriginal)})</span>
+      )}
     </div>
   );
 }

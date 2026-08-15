@@ -39,6 +39,13 @@ const TIPO_LABEL: Record<DiferenciaBorrador["tipoDiferencia"], string> = {
   sin_diferencia: "Sin diferencia",
 };
 
+// Misma clave para render, seguimiento y verificación (ver claveDiscrepancia
+// en PanelDiscrepancias.tsx): se desambigua con el índice DEL ARRAY
+// COMPLETO, el mismo que usa subirRmdCorregido en page.tsx.
+function claveDiferencia(d: DiferenciaBorrador, indiceCompleto: number): string {
+  return d.pasoIdVigente ?? d.pasoIdBorrador ?? `sin-paso-${indiceCompleto}`;
+}
+
 const TIPO_ALERTA_LABEL: Record<AlertaCoherencia["tipo"], string> = {
   equipo_retirado_en_uso: "Equipo retirado en uso",
   paso_huerfano: "Paso huérfano",
@@ -67,6 +74,19 @@ export function PanelDiferenciasBorrador({
   const verificaciones = Object.values(verificacionCorreccion);
   const totalCorregidas = verificaciones.filter((v) => v.resuelto).length;
 
+  // Score en vivo: arranca en el % de coincidencia que calculó la IA y se
+  // acerca a 100 en proporción a cuántas diferencias ya están marcadas
+  // "Corregido en SAP" — a mano o automáticamente al subir el RMD corregido.
+  const corregidosEnSap = resultado.diferenciasDetectadas.filter((d, i) => {
+    if (d.tipoDiferencia === "sin_diferencia") return false;
+    return estadosSeguimiento[claveDiferencia(d, i)] === "corregido_en_sap";
+  }).length;
+  const scoreActual =
+    diferenciasReales.length === 0
+      ? resultado.coincidenciaPorcentaje
+      : resultado.coincidenciaPorcentaje +
+        (corregidosEnSap / diferenciasReales.length) * (100 - resultado.coincidenciaPorcentaje);
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-paper">
       <header className="material-chrome-white z-10 border-b border-line/70 px-5 py-4 shadow-soft">
@@ -74,7 +94,7 @@ export function PanelDiferenciasBorrador({
           Diferencias vs. borrador de Producción
         </p>
         <div className="mt-1.5 flex items-center gap-3">
-          <ScoreCoincidencia score={resultado.coincidenciaPorcentaje} />
+          <ScoreCoincidencia scoreActual={scoreActual} scoreOriginal={resultado.coincidenciaPorcentaje} />
           <span className="text-[12px] text-muted">
             {diferenciasReales.length} diferencia
             {diferenciasReales.length !== 1 ? "s" : ""} detectada
@@ -143,8 +163,9 @@ export function PanelDiferenciasBorrador({
           </div>
         ) : (
           <ol className="space-y-2.5">
-            {diferenciasReales.map((d, i) => {
-              const pasoClave = d.pasoIdVigente ?? d.pasoIdBorrador ?? `sin-paso-${i}`;
+            {resultado.diferenciasDetectadas.map((d, i) => {
+              if (d.tipoDiferencia === "sin_diferencia") return null;
+              const pasoClave = claveDiferencia(d, i);
               return (
                 <TarjetaDiferencia
                   key={`${pasoClave}-${i}`}
@@ -167,15 +188,22 @@ export function PanelDiferenciasBorrador({
   );
 }
 
-function ScoreCoincidencia({ score }: { score: number }) {
+function ScoreCoincidencia({ scoreActual, scoreOriginal }: { scoreActual: number; scoreOriginal: number }) {
+  const redondeado = Math.round(scoreActual);
   const color =
-    score >= 80 ? "text-system" : score >= 50 ? "text-severidad-alta" : "text-severidad-critica";
+    redondeado >= 80 ? "text-system" : redondeado >= 50 ? "text-severidad-alta" : "text-severidad-critica";
   return (
-    <div className="flex items-baseline gap-1">
-      <span className={`font-mono text-2xl font-semibold tabular-nums ${color}`}>
-        {Math.round(score)}
+    <div className="flex items-baseline gap-1.5">
+      <span
+        key={redondeado}
+        className={`animate-scale-in font-mono text-2xl font-semibold tabular-nums transition-colors duration-300 ${color}`}
+      >
+        {redondeado}
       </span>
       <span className="text-[11px] text-muted">% de coincidencia</span>
+      {redondeado !== Math.round(scoreOriginal) && (
+        <span className="text-[11px] text-muted/70">(inicial: {Math.round(scoreOriginal)})</span>
+      )}
     </div>
   );
 }
