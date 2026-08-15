@@ -17,7 +17,7 @@ import type {
 } from "@/types/rmd";
 
 type EstadoSeguimiento = "pendiente" | "corregido_en_sap" | "descartado";
-type ModoEntrada = "control_cambios" | "borrador";
+type ModoEntrada = "control_cambios" | "borrador" | "corregido_vs_borrador";
 
 type VistaActual =
   | { tipo: "carga" }
@@ -156,12 +156,17 @@ export default function Home() {
       rmdBorradorFile: File;
       seccion: string;
       etapa: string;
+      // "vigente" (por defecto) o "corregido" — solo cambia el texto de
+      // carga mostrado, el flujo/endpoint es exactamente el mismo.
+      variante?: "vigente" | "corregido";
     }) => {
+      const etiquetaPrimerDocumento =
+        input.variante === "corregido" ? "el RMD corregido" : "el RMD vigente";
       setEstadosSeguimiento({});
       setVerificacionCorreccion({});
       setErrorVerificacion(null);
       try {
-        setVista({ tipo: "cargando", mensaje: "Extrayendo el RMD vigente…" });
+        setVista({ tipo: "cargando", mensaje: `Extrayendo ${etiquetaPrimerDocumento}…` });
 
         const formDataVigente = new FormData();
         formDataVigente.append("file", input.rmdVigenteFile);
@@ -171,7 +176,7 @@ export default function Home() {
         });
         if (!extractVigenteRes.ok) {
           const err = await extractVigenteRes.json();
-          throw new Error(err.error ?? "No se pudo extraer el PDF del RMD vigente.");
+          throw new Error(err.error ?? `No se pudo extraer el PDF de ${etiquetaPrimerDocumento}.`);
         }
         const { estructura: estructuraVigente, pdfBase64: pdfVigenteBase64 } =
           await extractVigenteRes.json();
@@ -428,6 +433,14 @@ export default function Home() {
               onClick={() => setModo("control_cambios")}
               label="Control de Cambio"
             />
+            <TabModo
+              ref={(el) => {
+                tabRefs.current.corregido_vs_borrador = el;
+              }}
+              activo={modo === "corregido_vs_borrador"}
+              onClick={() => setModo("corregido_vs_borrador")}
+              label="RMD Corregido"
+            />
             {indicador && (
               <div
                 className="pointer-events-none absolute bottom-0 h-[2px] rounded-full bg-system transition-all duration-300 ease-spring"
@@ -446,10 +459,19 @@ export default function Home() {
         <div className="flex-1 overflow-y-auto">
           {modo === "control_cambios" ? (
             <FormularioCarga onIniciarRevision={iniciarRevision} cargando={false} />
-          ) : (
+          ) : modo === "borrador" ? (
             <FormularioComparacionBorrador
               onIniciarComparacion={iniciarComparacionBorrador}
               cargando={false}
+              variante="vigente"
+            />
+          ) : (
+            <FormularioComparacionBorrador
+              onIniciarComparacion={(input) =>
+                iniciarComparacionBorrador({ ...input, variante: "corregido" })
+              }
+              cargando={false}
+              variante="corregido"
             />
           )}
         </div>
