@@ -8,11 +8,12 @@ import type {
   AlertaCoherencia,
   DestinoPdf,
 } from "@/types/rmd";
-import { BadgeSeveridad, BadgeConfianza, BadgeEstado, BORDE_ESTADO } from "./Badges";
+import { BadgeSeveridad, BadgeConfianza, BadgeEstado, BadgeVerificacion, BORDE_ESTADO } from "./Badges";
 import { DocumentosReferenciados } from "./DocumentosReferenciados";
 import { ResumenEjecutivo } from "./ResumenEjecutivo";
 
 type EstadoSeguimiento = "pendiente" | "corregido_en_sap" | "descartado";
+type Verificacion = { resuelto: boolean; justificacion: string };
 
 interface Props {
   resultado: ResultadoComparacionBorrador;
@@ -22,6 +23,7 @@ interface Props {
   onIrAPaso: (destino: DestinoPdf) => void;
   estadosSeguimiento: Record<string, EstadoSeguimiento>;
   onCambiarEstado: (pasoId: string, estado: EstadoSeguimiento) => void;
+  verificacionCorreccion: Record<string, Verificacion>;
 }
 
 const TIPO_LABEL: Record<DiferenciaBorrador["tipoDiferencia"], string> = {
@@ -57,10 +59,13 @@ export function PanelDiferenciasBorrador({
   onIrAPaso,
   estadosSeguimiento,
   onCambiarEstado,
+  verificacionCorreccion,
 }: Props) {
   const diferenciasReales = resultado.diferenciasDetectadas.filter(
     (d) => d.tipoDiferencia !== "sin_diferencia"
   );
+  const verificaciones = Object.values(verificacionCorreccion);
+  const totalCorregidas = verificaciones.filter((v) => v.resuelto).length;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-paper">
@@ -76,6 +81,15 @@ export function PanelDiferenciasBorrador({
             {diferenciasReales.length !== 1 ? "s" : ""}
           </span>
         </div>
+        {verificaciones.length > 0 && (
+          <p className="mt-2 text-[12px] text-muted">
+            Última verificación: <span className="font-medium text-system">{totalCorregidas} corregidas</span>
+            {" · "}
+            <span className="font-medium text-severidad-alta">
+              {verificaciones.length - totalCorregidas} pendientes
+            </span>
+          </p>
+        )}
         {resultado.requiereRevisionHumana && (
           <p className="mt-2 rounded-lg border border-severidad-alta/30 bg-severidad-altaTint px-2.5 py-1.5 text-[12px] text-severidad-alta">
             Este resultado requiere tu revisión directa: el modelo señaló ambigüedad.
@@ -142,6 +156,7 @@ export function PanelDiferenciasBorrador({
                   estado={estadosSeguimiento[pasoClave] ?? "pendiente"}
                   onCambiarEstado={(estado) => onCambiarEstado(pasoClave, estado)}
                   retraso={Math.min(i, 8) * 25}
+                  verificacion={verificacionCorreccion[pasoClave]}
                 />
               );
             })}
@@ -174,6 +189,7 @@ function TarjetaDiferencia({
   estado,
   onCambiarEstado,
   retraso,
+  verificacion,
 }: {
   diferencia: DiferenciaBorrador;
   activo: boolean;
@@ -183,6 +199,7 @@ function TarjetaDiferencia({
   estado: EstadoSeguimiento;
   onCambiarEstado: (estado: EstadoSeguimiento) => void;
   retraso: number;
+  verificacion?: Verificacion;
 }) {
   const [expandido, setExpandido] = useState(false);
 
@@ -269,6 +286,9 @@ function TarjetaDiferencia({
         className="mt-3 flex items-center gap-2 border-t border-line pt-2.5"
       >
         <BadgeEstado estado={estado} />
+        {verificacion && (
+          <BadgeVerificacion resuelto={verificacion.resuelto} justificacion={verificacion.justificacion} />
+        )}
         <div className="ml-auto flex gap-1">
           <BotonEstado
             label="Corregido en SAP"

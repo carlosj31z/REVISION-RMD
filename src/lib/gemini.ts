@@ -4,6 +4,8 @@ import type {
   ResultadoRevisionIA,
   ResultadoComparacionBorrador,
   ReglaHomologacion,
+  HallazgoAVerificar,
+  ResultadoVerificacionCorreccion,
 } from "@/types/rmd";
 
 function formatearReglas(reglas: ReglaHomologacion[]): string {
@@ -553,4 +555,114 @@ function validarYCompletarResultadoBorrador(
   });
 
   return { ...resultado, diferenciasDetectadas: diferenciasRevisadas };
+}
+
+// ============================================================
+// Verificación de corrección: el analista sube el RMD ya corregido en SAP
+// ============================================================
+// A diferencia de las dos comparaciones de arriba (que generan una lista
+// NUEVA de hallazgos desde cero), esto NO vuelve a analizar el documento
+// libremente: recibe la lista de hallazgos YA DETECTADOS en la revisión
+// original y, uno por uno, verifica si el RMD corregido efectivamente los
+// resuelve — con evidencia concreta, no una opinión genérica. Es lo que le
+// permite a la UI marcar cada tarjeta con un check verde o un triángulo de
+// pendiente en vez de mostrar una lista de hallazgos desconectada de la
+// anterior.
+
+const SYSTEM_PROMPT_VERIFICACION = `Eres un Auditor de Calidad Farmacéutica (QA) especializado en revisión de Registros de Manufactura Digital (RMD) bajo normativa BPM/GMP, trabajando para una planta farmacéutica peruana (Medifarma).
+
+## TU ÚNICA FUNCIÓN
+Ya existe una lista de OBSERVACIONES detectadas en una revisión anterior de este RMD. El analista corrigió el documento directamente en SAP (BTP) y te entrega ahora el RMD CORREGIDO. Tu trabajo es verificar, observación por observación, si el documento corregido YA la resolvió o SIGUE PENDIENTE. NO vuelvas a analizar el documento desde cero, NO inventes observaciones nuevas: limítate estrictamente a la lista que recibís.
+
+## REGLAS ABSOLUTAS (no negociables)
+
+1. **Una verificación por cada observación recibida, ni una más ni una menos.** Tu respuesta debe incluir exactamente un elemento en "verificaciones" por cada "id" de la lista de observaciones que recibiste, sin omitir ninguno.
+
+2. **Evidencia concreta, no opinión.** Para marcar "resuelto": true, debés encontrar en el RMD corregido (la estructura extraída y/o el PDF adjunto) el punto exacto que la observación señalaba, y confirmar que su contenido actual ya no presenta el problema descrito. "justificacion" debe citar textualmente qué dice AHORA el documento en ese punto — no una frase genérica como "se corrigió correctamente".
+
+3. **Ante la duda, "resuelto": false.** Si la corrección es parcial, ambigua, o no podés ubicar con confianza el punto señalado en el documento corregido, marca "resuelto": false y explicá en "justificacion" qué te impide confirmar la corrección (ej. "no se encontró el paso 4.2.5 en el documento corregido — verifica si fue renumerado").
+
+4. **Cero alucinación.** Nunca afirmes que algo fue corregido si no lo podés respaldar con contenido real del documento corregido.
+
+5. **JSON estricto, nada de texto libre.** Tu respuesta completa debe ser un único objeto JSON válido que cumpla exactamente el schema proporcionado. No agregues explicaciones antes o después del JSON. No uses markdown ni bloques de código.
+
+6. **Idioma.** Todo el contenido textual debe estar en español, en el registro imperativo/normativo propio de un documento BPM.`;
+
+const responseSchemaVerificacion = {
+  type: SchemaType.OBJECT,
+  properties: {
+    resumenVerificacion: { type: SchemaType.STRING },
+    verificaciones: {
+      type: SchemaType.ARRAY,
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          id: { type: SchemaType.NUMBER },
+          resuelto: { type: SchemaType.BOOLEAN },
+          justificacion: { type: SchemaType.STRING },
+        },
+        required: ["id", "resuelto", "justificacion"],
+      },
+    },
+  },
+  required: ["resumenVerificacion", "verificaciones"],
+};
+
+export interface VerificacionCorreccionInput {
+  hallazgos: HallazgoAVerificar[];
+  rmdCorregido: RMDExtraido;
+  pdfCorregidoBase64?: string;
+}
+
+export async function verificarCorreccionRMD(
+  input: VerificacionCorreccionInput
+): Promise<ResultadoVerificacionCorreccion> {
+  const genAI = getClient();
+  const model = genAI.getGenerativeModel({
+    model: "gemini-flash-latest",
+    systemInstruction: SYSTEM_PROMPT_VERIFICACION,
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: responseSchemaVerificacion as any,
+      temperature: 0.1,
+    },
+  });
+
+  const parts: any[] = [
+    {
+      text: `## OBSERVACIONES A VERIFICAR (de la revisión anterior)
+
+${input.hallazgos.map((h) => `- id ${h.id} · ${h.ubicacionReferencia}: ${h.descripcion}`).join("\n")}
+
+## RMD CORREGIDO (estructura extraída, sección 6 de firmas ya excluida)
+
+${JSON.stringify(input.rmdCorregido, null, 2)}`,
+    },
+  ];
+
+  if (input.pdfCorregidoBase64) {
+    parts.push({
+      inlineData: { mimeType: "application/pdf", data: input.pdfCorregidoBase64 },
+    });
+    parts.push({ text: "↑ PDF original del RMD corregido, como respaldo visual del layout." });
+  }
+
+  const result = await conReintentos(() =>
+    model.generateContent({ contents: [{ role: "user", parts }] })
+  );
+
+  const raw = result.response.text();
+
+  let parsed: ResultadoVerificacionCorreccion;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `Gemini devolvió una respuesta que no es JSON válido al verificar la corrección. Esto no ` +
+        `debería ocurrir con responseSchema activo; revisa el modelo o los límites de tokens. ` +
+        `Respuesta cruda: ${raw.slice(0, 500)}`
+    );
+  }
+
+  return parsed;
 }

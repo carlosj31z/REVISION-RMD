@@ -76,6 +76,15 @@ export default function Home() {
   // donde se dejó.
   const [revisionMinimizada, setRevisionMinimizada] = useState<VistaResultado | null>(null);
 
+  // Verificación automática al subir el RMD ya corregido en SAP: por cada
+  // observación original (misma clave que estadosSeguimiento) guarda si la
+  // IA confirmó que el documento corregido ya la resuelve.
+  const [verificandoCorreccion, setVerificandoCorreccion] = useState(false);
+  const [errorVerificacion, setErrorVerificacion] = useState<string | null>(null);
+  const [verificacionCorreccion, setVerificacionCorreccion] = useState<
+    Record<string, { resuelto: boolean; justificacion: string }>
+  >({});
+
   const iniciarRevision = useCallback(
     async (input: {
       rmdFile: File;
@@ -85,6 +94,8 @@ export default function Home() {
       controlCambioFile?: File;
     }) => {
       setEstadosSeguimiento({});
+      setVerificacionCorreccion({});
+      setErrorVerificacion(null);
       try {
         setVista({ tipo: "cargando", mensaje: "Extrayendo el RMD vigente…" });
 
@@ -147,6 +158,8 @@ export default function Home() {
       etapa: string;
     }) => {
       setEstadosSeguimiento({});
+      setVerificacionCorreccion({});
+      setErrorVerificacion(null);
       try {
         setVista({ tipo: "cargando", mensaje: "Extrayendo el RMD vigente…" });
 
@@ -237,6 +250,100 @@ export default function Home() {
     [vista]
   );
 
+  const subirRmdCorregido = useCallback(
+    async (file: File) => {
+      if (vista.tipo !== "resultado" && vista.tipo !== "resultado-borrador") return;
+      const vistaActual = vista;
+
+      setVerificandoCorreccion(true);
+      setErrorVerificacion(null);
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        const extractRes = await fetch("/api/extract-pdf", { method: "POST", body: formData });
+        if (!extractRes.ok) {
+          const err = await extractRes.json();
+          throw new Error(err.error ?? "No se pudo extraer el PDF corregido.");
+        }
+        const { estructura, pdfBase64 } = await extractRes.json();
+
+        // Reconstruir la misma "clave" que usan los paneles para cada
+        // tarjeta (pasoId real, o un id sintético para los que no tienen uno
+        // — ver PanelDiscrepancias/PanelDiferenciasBorrador), así la
+        // verificación se puede enlazar de vuelta con la tarjeta correcta.
+        const clavePorId = new Map<number, string>();
+        const hallazgos: { id: number; ubicacionReferencia: string; descripcion: string }[] = [];
+
+        if (vistaActual.tipo === "resultado") {
+          vistaActual.resultado.discrepanciasDetectadas.forEach((d, i) => {
+            if (d.tipoDiscrepancia === "sin_discrepancia") return;
+            clavePorId.set(i, d.pasoId !== "N/A" ? d.pasoId : `na-${i}`);
+            hallazgos.push({
+              id: i,
+              ubicacionReferencia: d.ubicacionReferencia,
+              descripcion: `${d.tipoDiscrepancia}: ${d.queExigeElControlDeCambios}`,
+            });
+          });
+        } else {
+          vistaActual.resultado.diferenciasDetectadas.forEach((d, i) => {
+            if (d.tipoDiferencia === "sin_diferencia") return;
+            clavePorId.set(i, d.pasoIdVigente ?? d.pasoIdBorrador ?? `sin-paso-${i}`);
+            hallazgos.push({
+              id: i,
+              ubicacionReferencia: d.ubicacionReferencia,
+              descripcion: `${d.tipoDiferencia}: ${d.justificacion}`,
+            });
+          });
+        }
+
+        if (hallazgos.length === 0) {
+          throw new Error("Esta revisión no tiene observaciones pendientes para verificar.");
+        }
+
+        const verifRes = await fetch("/api/verificar-correccion", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rmdCorregido: estructura,
+            pdfCorregidoBase64: pdfBase64,
+            hallazgos,
+          }),
+        });
+        if (!verifRes.ok) {
+          const err = await verifRes.json();
+          throw new Error(err.error ?? "No se pudo verificar la corrección.");
+        }
+        const { resultado: resultadoVerificacion } = await verifRes.json();
+
+        const nuevaVerificacion: Record<string, { resuelto: boolean; justificacion: string }> = {};
+        for (const v of resultadoVerificacion.verificaciones as {
+          id: number;
+          resuelto: boolean;
+          justificacion: string;
+        }[]) {
+          const clave = clavePorId.get(v.id);
+          if (!clave) continue;
+          nuevaVerificacion[clave] = { resuelto: v.resuelto, justificacion: v.justificacion };
+          // Sincroniza el checklist manual: si la IA confirma que ya está
+          // resuelto, lo marca "Corregido en SAP" (con su persistencia ya
+          // existente). Si sigue pendiente, no toca lo que el analista haya
+          // marcado a mano — solo agrega el triángulo de aviso.
+          if (v.resuelto) cambiarEstadoSeguimiento(clave, "corregido_en_sap");
+        }
+
+        setVerificacionCorreccion((prev) => ({ ...prev, ...nuevaVerificacion }));
+        setSaltoPdf(null);
+        URL.revokeObjectURL(vistaActual.pdfUrl);
+        setVista({ ...vistaActual, rmd: estructura, pdfUrl: URL.createObjectURL(file) });
+      } catch (err: any) {
+        setErrorVerificacion(err.message ?? "Ocurrió un error inesperado al verificar la corrección.");
+      } finally {
+        setVerificandoCorreccion(false);
+      }
+    },
+    [vista, cambiarEstadoSeguimiento]
+  );
+
   const irAPasoEnPdf = useCallback(
     (destino: DestinoPdf) => {
       if (vista.tipo !== "resultado" && vista.tipo !== "resultado-borrador") return;
@@ -272,6 +379,8 @@ export default function Home() {
       return { tipo: "carga" };
     });
     setSaltoPdf(null);
+    setVerificacionCorreccion({});
+    setErrorVerificacion(null);
   }, []);
 
   const minimizarRevision = useCallback(() => {
@@ -416,6 +525,10 @@ export default function Home() {
             {vista.rmd.encabezado.producto} · {vista.rmd.encabezado.codigo}
           </p>
           <div className="flex items-center gap-1">
+            <BotonSubirCorregido
+              verificando={verificandoCorreccion}
+              onSeleccionar={subirRmdCorregido}
+            />
             <button
               onClick={minimizarRevision}
               title="Minimizar y revisar otro apartado sin perder este análisis"
@@ -431,6 +544,17 @@ export default function Home() {
             </button>
           </div>
         </div>
+        {errorVerificacion && (
+          <div className="flex animate-fade-in-up items-center justify-between gap-3 border-b border-severidad-critica/20 bg-severidad-criticaTint px-5 py-2">
+            <p className="text-[12.5px] text-severidad-critica">{errorVerificacion}</p>
+            <button
+              onClick={() => setErrorVerificacion(null)}
+              className="shrink-0 rounded px-1.5 py-0.5 text-[12px] text-severidad-critica/70 transition-colors hover:bg-white/50 hover:text-severidad-critica"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         <div className="grid min-h-0 flex-1 grid-cols-2 overflow-hidden">
           <PanelRMDVigente pdfUrl={vista.pdfUrl} salto={saltoPdf} />
           {vista.tipo === "resultado" ? (
@@ -442,6 +566,7 @@ export default function Home() {
               onIrAPaso={irAPasoEnPdf}
               estadosSeguimiento={estadosSeguimiento}
               onCambiarEstado={cambiarEstadoSeguimiento}
+              verificacionCorreccion={verificacionCorreccion}
             />
           ) : (
             <PanelDiferenciasBorrador
@@ -452,6 +577,7 @@ export default function Home() {
               onIrAPaso={irAPasoEnPdf}
               estadosSeguimiento={estadosSeguimiento}
               onCambiarEstado={cambiarEstadoSeguimiento}
+              verificacionCorreccion={verificacionCorreccion}
             />
           )}
         </div>
@@ -501,6 +627,51 @@ function BotonConfig({ onClick, label }: { onClick: () => void; label: string })
     >
       ⚙ {label}
     </button>
+  );
+}
+
+/**
+ * Botón que abre el selector de archivo del RMD ya corregido en SAP. Al
+ * elegir un PDF, dispara la verificación automática (ver subirRmdCorregido
+ * en el componente Home) que marca cada observación como corregida o
+ * pendiente comparando contra el documento nuevo.
+ */
+function BotonSubirCorregido({
+  verificando,
+  onSeleccionar,
+}: {
+  verificando: boolean;
+  onSeleccionar: (file: File) => void;
+}) {
+  return (
+    <label
+      title="Subir el RMD ya corregido en SAP para verificar qué observaciones quedaron resueltas"
+      className={`flex items-center gap-1.5 rounded border px-2.5 py-1 text-[12px] font-medium transition-all duration-150 ease-spring ${
+        verificando
+          ? "cursor-not-allowed border-line text-muted/50"
+          : "cursor-pointer border-line text-system hover:border-system hover:bg-system-tint active:scale-95"
+      }`}
+    >
+      {verificando ? (
+        <>
+          <span className="h-3 w-3 animate-spin rounded-full border-2 border-line border-t-system" />
+          Verificando…
+        </>
+      ) : (
+        <>↑ Subir RMD corregido</>
+      )}
+      <input
+        type="file"
+        accept="application/pdf"
+        disabled={verificando}
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) onSeleccionar(file);
+        }}
+      />
+    </label>
   );
 }
 

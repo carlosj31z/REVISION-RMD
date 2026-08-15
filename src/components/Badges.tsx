@@ -87,3 +87,64 @@ export function BadgeConfianza({ nivel }: { nivel: "alta" | "media" | "baja" }) 
     </span>
   );
 }
+
+/**
+ * Resultado de la verificación automática al subir el RMD corregido — NO es
+ * lo mismo que BadgeEstado (que es la marca manual del analista): esto es
+ * el veredicto de la IA al comparar contra el documento corregido. Check
+ * verde si ya está resuelto, triángulo naranja si sigue pendiente.
+ */
+export function BadgeVerificacion({
+  resuelto,
+  justificacion,
+}: {
+  resuelto: boolean;
+  justificacion?: string;
+}) {
+  if (resuelto) {
+    return (
+      <span
+        title={justificacion}
+        className="inline-flex items-center gap-1 rounded-full border border-system/30 bg-system-tint px-2 py-0.5 text-[11px] font-medium text-system"
+      >
+        <svg
+          viewBox="0 0 16 16"
+          width="11"
+          height="11"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+        </svg>
+        Corregido — verificado
+      </span>
+    );
+  }
+  return (
+    <span
+      title={justificacion}
+      className="inline-flex items-center gap-1 rounded-full border border-severidad-alta/30 bg-severidad-altaTint px-2 py-0.5 text-[11px] font-medium text-severidad-alta"
+    >
+      <svg
+        viewBox="0 0 16 16"
+        width="11"
+        height="11"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M8 1.5 1 13.5h14L8 1.5Z" />
+        <path d="M8 6.5v3.5" />
+        <path d="M8 12h.01" />
+      </svg>
+      Sin corregir aún
+    </span>
+  );
+}

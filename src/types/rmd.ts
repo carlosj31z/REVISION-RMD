@@ -235,3 +235,30 @@ export interface DocumentoObsoleto {
   creadoPor?: string | null;
   createdAt?: string;
 }
+
+// ---------- Verificación de corrección (subir RMD corregido) ----------
+// El analista corrige el RMD directamente en SAP (BTP) y sube el PDF ya
+// corregido. Esto NO vuelve a correr el análisis desde cero: verifica,
+// hallazgo por hallazgo de la revisión original, si el documento corregido
+// ya lo resuelve — evidencia concreta, no una opinión genérica.
+
+// Hallazgo resumido que se envía a Gemini para verificar: "id" es el índice
+// del hallazgo dentro del array original (discrepanciasDetectadas o
+// diferenciasDetectadas) tal como estaba en el momento del análisis — sirve
+// para volver a enlazar la verificación con la tarjeta correcta en la UI.
+export interface HallazgoAVerificar {
+  id: number;
+  ubicacionReferencia: string;
+  descripcion: string;
+}
+
+export interface VerificacionHallazgo {
+  id: number;
+  resuelto: boolean;
+  justificacion: string; // qué dice AHORA el RMD corregido en ese punto (evidencia, no opinión)
+}
+
+export interface ResultadoVerificacionCorreccion {
+  resumenVerificacion: string;
+  verificaciones: VerificacionHallazgo[];
+}
