@@ -1,0 +1,29 @@
+# Dependencias
+/node_modules
+
+# Next.js
+/.next/
+/out/
+
+# Producción
+/build
+
+# Variables de entorno — NUNCA subir claves reales
+.env
+.env.local
+.env.*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor / SO
+.DS_Store
+*.pem
+.vscode/
+.idea/
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
