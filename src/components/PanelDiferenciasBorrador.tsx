@@ -173,7 +173,15 @@ export function PanelDiferenciasBorrador({
                   activo={pasoResaltado !== null && pasoResaltado === pasoClave}
                   onHover={() => onHoverPaso(pasoClave)}
                   onLeave={() => onHoverPaso(null)}
-                  onIrAPaso={() => onIrAPaso({ pasoId: d.pasoIdVigente, seccionGeneral: d.seccionGeneral })}
+                  onIrAPaso={() =>
+                    onIrAPaso({
+                      pasoId: d.pasoIdVigente,
+                      seccionGeneral: d.seccionGeneral,
+                      // Cita de lo que dice el documento vigente en ese punto:
+                      // es el fragmento concreto que difiere del borrador.
+                      textoBuscado: d.textoEnVigente,
+                    })
+                  }
                   estado={estadosSeguimiento[pasoClave] ?? "pendiente"}
                   onCambiarEstado={(estado) => onCambiarEstado(pasoClave, estado)}
                   retraso={Math.min(i, 8) * 25}

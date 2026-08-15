@@ -9,6 +9,10 @@ export interface SaltoPdf {
   // Precauciones, sin un patrón de línea puntual que buscar): se hace scroll
   // a la página y se remarca su borde, sin intentar resaltar una línea.
   pasoId?: string;
+  // Cita textual de lo que el análisis marcó como observado dentro del paso.
+  // Si se encuentra en el PDF, ese fragmento exacto se resalta fuerte y el
+  // resto del paso queda en un amarillo suave de contexto.
+  textoBuscado?: string | null;
   token: number; // fuerza reaccionar aunque se pida el mismo paso dos veces seguidas
 }
 
@@ -22,6 +26,9 @@ interface RectanguloResaltado {
   y: number;
   width: number;
   height: number;
+  // true  = fragmento exacto señalado por el análisis (resaltado fuerte)
+  // false = resto del paso, sólo contexto (amarillo suave)
+  foco: boolean;
 }
 
 /**
@@ -208,7 +215,12 @@ export function VisorPdf({ pdfUrl, salto }: Props) {
         const escala = canvas.width > 0 ? canvas.width / viewportBase.width : 1;
         const viewport = page.getViewport({ scale: escala });
 
-        const rects = await buscarRectangulosPaso(page, viewport, salto.pasoId);
+        const rects = await calcularRectangulosResaltado(
+          page,
+          viewport,
+          salto.pasoId,
+          salto.textoBuscado ?? undefined
+        );
         if (cancelado) return;
 
         if (rects.length === 0) {
@@ -221,7 +233,8 @@ export function VisorPdf({ pdfUrl, salto }: Props) {
           return;
         }
 
-        let primeraMarca: HTMLDivElement | null = null;
+        let marcaAncla: HTMLDivElement | null = null;
+        const marcasFoco: HTMLDivElement[] = [];
         const marcas: HTMLDivElement[] = [];
         for (const r of rects) {
           // Recorte defensivo: la marca nunca debe poder salirse del área
@@ -237,8 +250,14 @@ export function VisorPdf({ pdfUrl, salto }: Props) {
           marca.style.top = `${y}px`;
           marca.style.width = `${width}px`;
           marca.style.height = `${height}px`;
-          marca.style.background = "rgba(255, 214, 10, 0.32)";
-          marca.style.borderBottom = "2px solid rgba(224, 168, 0, 0.85)";
+          if (r.foco) {
+            marca.style.background = "rgba(255, 214, 10, 0.45)";
+            marca.style.borderBottom = "2px solid rgba(224, 168, 0, 0.95)";
+          } else {
+            // Contexto: el paso entero sigue marcado, pero en un tono suave
+            // que no compite con el fragmento puntual a corregir.
+            marca.style.background = "rgba(255, 214, 10, 0.15)";
+          }
           marca.style.borderRadius = "1px";
           marca.style.pointerEvents = "none";
           marca.style.opacity = "0";
@@ -247,8 +266,14 @@ export function VisorPdf({ pdfUrl, salto }: Props) {
           marca.style.transition = "opacity 220ms cubic-bezier(0.32,0.72,0,1), transform 220ms cubic-bezier(0.32,0.72,0,1)";
           overlay.appendChild(marca);
           marcas.push(marca);
-          primeraMarca ??= marca;
+          if (r.foco) {
+            marcasFoco.push(marca);
+            marcaAncla ??= marca;
+          }
         }
+        // Si no hubo fragmento puntual, el ancla es la primera marca del paso.
+        marcaAncla ??= marcas[0] ?? null;
+
         // Doble rAF: fuerza al navegador a pintar el estado inicial (opacidad 0)
         // antes de animar al estado final, para que la transición se vea.
         requestAnimationFrame(() => {
@@ -260,15 +285,16 @@ export function VisorPdf({ pdfUrl, salto }: Props) {
           });
         });
         setTimeout(() => {
-          primeraMarca?.scrollIntoView({ block: "center", behavior: "smooth" });
+          marcaAncla?.scrollIntoView({ block: "center", behavior: "smooth" });
         }, 300);
-        // Pulso breve: ayuda a ubicar la zona de un vistazo aunque el
-        // recuadro no cubra perfectamente cada palabra.
+        // Pulso breve sólo sobre el fragmento señalado (o sobre todo el paso
+        // si no se identificó uno): ayuda a ubicar la zona de un vistazo.
+        const marcasPulso = marcasFoco.length > 0 ? marcasFoco : marcas;
         setTimeout(() => {
-          for (const m of marcas) m.classList.add("marca-pulso");
+          for (const m of marcasPulso) m.classList.add("marca-pulso");
         }, 550);
         setTimeout(() => {
-          for (const m of marcas) m.classList.remove("marca-pulso");
+          for (const m of marcasPulso) m.classList.remove("marca-pulso");
         }, 1950);
       } catch (err) {
         console.error("Error resaltando el paso en el PDF:", err);
@@ -342,111 +368,275 @@ export function VisorPdf({ pdfUrl, salto }: Props) {
   );
 }
 
+// Ítem de texto del PDF ya convertido a coordenadas de canvas.
+interface ItemUbicado {
+  str: string;
+  x: number; // borde izquierdo, en px de canvas
+  yBase: number; // línea base (baseline), en px de canvas
+  ancho: number; // ancho real del ítem, en px de canvas
+  alto: number; // alto de la fuente, en px de canvas
+  ascent: number; // px por encima de la baseline
+  fontFamily: string;
+}
+
+// Canvas de medición reutilizado: sirve para repartir el ancho REAL de un
+// ítem entre sus caracteres respetando las proporciones de una fuente
+// proporcional (una "M" ocupa más que una "i"), en vez de asumir que todos
+// los caracteres miden lo mismo.
+let ctxMedicion: CanvasRenderingContext2D | null | undefined;
+function obtenerMedidor(): CanvasRenderingContext2D | null {
+  if (ctxMedicion === undefined) {
+    ctxMedicion = document.createElement("canvas").getContext("2d");
+  }
+  return ctxMedicion;
+}
+
 /**
- * Busca la LÍNEA física de la página donde empieza el patrón "<pasoId>.-" (el
- * mismo patrón que usa el parseo heurístico del lado servidor) y devuelve los
- * rectángulos, en coordenadas de canvas, que cubren esa línea — y a lo sumo
- * unas pocas líneas más si el paso sigue sin toparse con el siguiente paso
- * numerado, para evitar resaltar el bloque de texto entero.
+ * Fracción [0..1] del ancho del ítem que ocupan sus primeros `n` caracteres.
+ * Se normaliza contra el ancho medido del string completo, así que sólo
+ * importan las proporciones relativas entre caracteres: aunque la fuente que
+ * mide el navegador no sea idéntica a la del PDF, el resultado se escala
+ * después al ancho real del ítem y el error queda mínimo.
  */
-async function buscarRectangulosPaso(
+function fraccionAncho(item: ItemUbicado, n: number): number {
+  if (n <= 0) return 0;
+  if (n >= item.str.length) return 1;
+  const ctx = obtenerMedidor();
+  if (!ctx) return n / item.str.length; // sin canvas: reparto uniforme
+  ctx.font = `${item.alto}px ${item.fontFamily}`;
+  const total = ctx.measureText(item.str).width;
+  if (!(total > 0)) return n / item.str.length;
+  return ctx.measureText(item.str.slice(0, n)).width / total;
+}
+
+// Marcas diacríticas combinantes (los acentos que deja NFD al separarlos).
+const DIACRITICOS = /[̀-ͯ]/g;
+
+/**
+ * Normaliza texto para comparar (mayúsculas, sin acentos, espacios
+ * colapsados) devolviendo además el mapa de índices hacia el texto original,
+ * para poder traducir una coincidencia de vuelta a posiciones reales.
+ */
+function normalizarConMapa(texto: string): { normalizado: string; mapa: number[] } {
+  const chars: string[] = [];
+  const mapa: number[] = [];
+  let veniaEspacio = true; // arranca en true para descartar espacios iniciales
+  for (let i = 0; i < texto.length; i++) {
+    const c = texto[i];
+    if (/\s/.test(c)) {
+      if (!veniaEspacio) {
+        chars.push(" ");
+        mapa.push(i);
+        veniaEspacio = true;
+      }
+      continue;
+    }
+    const base = c.normalize("NFD").replace(DIACRITICOS, "") || c;
+    chars.push(base[0].toUpperCase());
+    mapa.push(i);
+    veniaEspacio = false;
+  }
+  return { normalizado: chars.join(""), mapa };
+}
+
+/**
+ * Calcula los rectángulos de resaltado, en coordenadas de canvas, para un
+ * paso del procedimiento:
+ *
+ *  - Resalta el paso COMPLETO (desde "<pasoId>.-" hasta el siguiente paso
+ *    numerado), sin cortarlo a unas pocas líneas.
+ *  - Si se pasa `textoBuscado` (la cita textual que el análisis marcó como
+ *    observada) y se encuentra dentro del paso, ese fragmento se devuelve
+ *    con `foco: true` para resaltarlo fuerte, y el resto del paso queda como
+ *    contexto suave. Si no se encuentra, todo el paso va con `foco: true`.
+ */
+async function calcularRectangulosResaltado(
   page: PDFPageProxy,
-  viewport: { transform: number[] },
-  pasoId: string
+  viewport: { transform: number[]; scale: number },
+  pasoId: string,
+  textoBuscado?: string
 ): Promise<RectanguloResaltado[]> {
   const pdfjsLib = await import("pdfjs-dist");
   const contenido = await page.getTextContent();
-  const items = contenido.items.filter(
-    (it): it is typeof it & { str: string; transform: number[]; width: number } =>
-      typeof (it as any).str === "string" && (it as any).str.length > 0
-  );
+  const estilos: Record<string, { fontFamily?: string; ascent?: number }> =
+    (contenido as any).styles ?? {};
 
-  const itemsConTx = items.map((item) => ({
-    item,
-    tx: pdfjsLib.Util.transform(viewport.transform, item.transform),
-  }));
+  const items: ItemUbicado[] = [];
+  for (const crudo of contenido.items as any[]) {
+    if (typeof crudo?.str !== "string" || crudo.str.length === 0) continue;
+    const tx = pdfjsLib.Util.transform(viewport.transform, crudo.transform);
+    const alto = Math.hypot(tx[2], tx[3]) || 10;
+    const estilo = estilos[crudo.fontName] ?? {};
+    // pdf.js expone el ascent real de la fuente (0..1). 0.8 es su mismo
+    // fallback cuando no hay dato.
+    const factorAscent =
+      typeof estilo.ascent === "number" && estilo.ascent > 0 && estilo.ascent < 1
+        ? estilo.ascent
+        : 0.8;
+    // Ancho REAL: item.width viene en unidades de usuario del PDF, así que
+    // sólo hay que multiplicarlo por la escala del viewport — es exactamente
+    // lo que hace la capa de texto oficial de pdf.js (canvasWidth * scale).
+    // Multiplicarlo además por Math.hypot(tx[0],tx[1]) —que YA incluye el
+    // tamaño de fuente— lo inflaba ~10x y hacía que el resaltado se saliera
+    // del margen de la hoja.
+    const ancho = (crudo.width ?? 0) * viewport.scale;
+    if (![tx[4], tx[5], ancho, alto].every(Number.isFinite)) continue;
+    items.push({
+      str: crudo.str,
+      x: tx[4],
+      yBase: tx[5],
+      ancho,
+      alto,
+      ascent: alto * factorAscent,
+      fontFamily: estilo.fontFamily ?? "sans-serif",
+    });
+  }
+  if (items.length === 0) return [];
 
-  // Agrupar los ítems en líneas físicas por coordenada Y (con tolerancia de
-  // subpíxel), y ordenar cada línea de izquierda a derecha para reconstruir
-  // el texto en orden de lectura.
-  type Grupo = { y: number; items: typeof itemsConTx };
-  const lineas: Grupo[] = [];
+  // Agrupar en líneas físicas por baseline (con tolerancia de subpíxel) y
+  // ordenar cada una de izquierda a derecha, para reconstruir el orden de
+  // lectura real del documento.
   const TOLERANCIA_Y = 2.5;
-  for (const it of itemsConTx) {
-    const y = it.tx[5];
-    let linea = lineas.find((l) => Math.abs(l.y - y) < TOLERANCIA_Y);
+  const lineas: { y: number; items: ItemUbicado[] }[] = [];
+  for (const it of items) {
+    let linea = lineas.find((l) => Math.abs(l.y - it.yBase) < TOLERANCIA_Y);
     if (!linea) {
-      linea = { y, items: [] };
+      linea = { y: it.yBase, items: [] };
       lineas.push(linea);
     }
     linea.items.push(it);
   }
-  for (const l of lineas) l.items.sort((a, b) => a.tx[4] - b.tx[4]);
+  for (const l of lineas) l.items.sort((a, b) => a.x - b.x);
   lineas.sort((a, b) => a.y - b.y);
 
   const patron = `${pasoId}.-`;
-  const idxLineaInicio = lineas.findIndex((l) =>
-    l.items.map((i) => i.item.str).join("").includes(patron)
-  );
-  if (idxLineaInicio === -1) return [];
+  const idxInicio = lineas.findIndex((l) => l.items.map((i) => i.str).join("").includes(patron));
+  if (idxInicio === -1) return [];
 
-  const rects: RectanguloResaltado[] = [];
-  const patronNuevoPaso = /^\d\.\d(?:\.\d+)?\.-/;
-  const MAX_LINEAS = 4; // tope: nunca resaltar más de unas pocas líneas
-  const UMBRAL_FUSION = 6; // px: gaps menores a esto se fusionan en una sola caja continua
+  // Fin del paso: la siguiente línea que arranca con OTRO paso numerado.
+  // Sin tope artificial de líneas — el paso se resalta entero.
+  const patronNuevoPaso = /^\d+\.\d+(?:\.\d+)?\.-/;
+  const MAX_LINEAS_SEGURIDAD = 40; // sólo para no desbocarse ante un PDF atípico
+  let idxFin = lineas.length;
+  for (let i = idxInicio + 1; i < lineas.length && i < idxInicio + MAX_LINEAS_SEGURIDAD; i++) {
+    const textoLinea = lineas[i].items.map((it) => it.str).join("").trim();
+    if (patronNuevoPaso.test(textoLinea)) {
+      idxFin = i;
+      break;
+    }
+    idxFin = i + 1;
+  }
 
-  for (let i = idxLineaInicio; i < lineas.length && i < idxLineaInicio + MAX_LINEAS; i++) {
-    const linea = lineas[i];
-    const textoLinea = linea.items.map((it) => it.item.str).join("");
+  // Aplanar el paso a una secuencia de caracteres, cada uno sabiendo de qué
+  // ítem viene y en qué offset — así cualquier rango de texto se traduce a
+  // rectángulos con la misma lógica.
+  type Caracter = { item: ItemUbicado; offset: number };
+  const caracteres: Caracter[] = [];
+  let textoPaso = "";
+  for (let i = idxInicio; i < idxFin; i++) {
+    for (const item of lineas[i].items) {
+      for (let k = 0; k < item.str.length; k++) {
+        caracteres.push({ item, offset: k });
+        textoPaso += item.str[k];
+      }
+    }
+    // Separador entre líneas (no pertenece a ningún ítem: se omite al pintar).
+    caracteres.push({ item: null as unknown as ItemUbicado, offset: -1 });
+    textoPaso += " ";
+  }
 
-    // Si una línea posterior empieza con OTRO paso numerado, ahí termina el bloque.
-    if (i > idxLineaInicio && patronNuevoPaso.test(textoLinea.trim())) break;
+  // El resaltado arranca en el "<pasoId>.-", no antes (la línea puede traer
+  // texto de otra columna a la izquierda).
+  const desdePaso = Math.max(0, textoPaso.indexOf(patron));
 
-    // Offset (en caracteres, dentro del texto concatenado de la línea) donde
-    // empieza lo que hay que resaltar: el inicio exacto del patrón "<id>.-"
-    // en la primera línea, o el principio de la línea en las siguientes.
-    const offsetInicio = i === idxLineaInicio ? textoLinea.indexOf(patron) : 0;
-
-    let cursor = 0; // índice de carácter acumulado a través de los ítems de la línea
-    let cajaActual: RectanguloResaltado | null = null;
-
-    for (const { item, tx } of linea.items) {
-      const inicioItem = cursor;
-      cursor += item.str.length;
-      if (cursor <= offsetInicio) continue; // ítem entero antes del punto de inicio: se omite
-
-      const alturaTexto = Math.hypot(tx[2], tx[3]) || 10;
-      const escalaAncho = Math.hypot(tx[0], tx[1]) || 1;
-      const anchoPorChar = item.str.length > 0 ? (item.width * escalaAncho) / item.str.length : 0;
-
-      // Parte del ítem que realmente cae dentro del rango a resaltar (puede
-      // ser el ítem completo, o solo su cola si el patrón empieza a mitad).
-      const charsAntes = Math.max(0, offsetInicio - inicioItem);
-      const strRelevante = item.str.slice(charsAntes);
-
-      // Recortar espacios en blanco al inicio/fin para no pintar aire entre palabras.
-      const trimInicio = strRelevante.length - strRelevante.trimStart().length;
-      const strVisible = strRelevante.trim();
-      if (strVisible.length === 0) continue; // ítem en blanco: nada que resaltar
-
-      const x = tx[4] + (charsAntes + trimInicio) * anchoPorChar;
-      const y = tx[5] - alturaTexto * 0.82;
-      const ancho = strVisible.length * anchoPorChar;
-      if (![x, y, ancho, alturaTexto].every(Number.isFinite)) continue;
-
-      const anchoClamp = Math.min(Math.max(ancho, 2), 3000); // tope defensivo ante transforms atípicos
-
-      // Fusionar con la caja anterior de la misma línea si están casi pegadas,
-      // para dibujar una sola barra continua en vez de fragmentos con costuras.
-      if (cajaActual && x - (cajaActual.x + cajaActual.width) < UMBRAL_FUSION) {
-        cajaActual.width = Math.max(cajaActual.width, x + anchoClamp - cajaActual.x);
-        cajaActual.height = Math.max(cajaActual.height, alturaTexto * 1.05);
-      } else {
-        cajaActual = { x, y, width: anchoClamp, height: alturaTexto * 1.05 };
-        rects.push(cajaActual);
+  // Ubicar el fragmento exacto señalado por el análisis dentro del paso.
+  let rangoFoco: { desde: number; hasta: number } | null = null;
+  if (textoBuscado && textoBuscado.trim().length >= 4) {
+    const paso = normalizarConMapa(textoPaso);
+    const buscado = normalizarConMapa(textoBuscado);
+    if (buscado.normalizado.length >= 4) {
+      let pos = paso.normalizado.indexOf(buscado.normalizado);
+      // Si la cita completa no aparece (el modelo suele citar de más o
+      // reformatear), se prueba con un prefijo significativo.
+      if (pos === -1 && buscado.normalizado.length > 24) {
+        pos = paso.normalizado.indexOf(buscado.normalizado.slice(0, 24));
+      }
+      if (pos !== -1) {
+        const largo = Math.min(
+          buscado.normalizado.length,
+          paso.normalizado.length - pos
+        );
+        const desde = paso.mapa[pos];
+        const hasta = (paso.mapa[pos + largo - 1] ?? paso.mapa[paso.mapa.length - 1]) + 1;
+        if (Number.isFinite(desde) && Number.isFinite(hasta) && hasta > desde) {
+          rangoFoco = { desde, hasta };
+        }
       }
     }
   }
 
-  return rects;
+  const UMBRAL_FUSION = 4; // px: huecos menores se fusionan en una barra continua
+
+  const rectsDeRango = (desde: number, hasta: number, foco: boolean): RectanguloResaltado[] => {
+    // Agrupar caracteres consecutivos que pertenecen al mismo ítem.
+    const segmentos: { item: ItemUbicado; ini: number; fin: number }[] = [];
+    for (let i = desde; i < hasta && i < caracteres.length; i++) {
+      const c = caracteres[i];
+      if (!c || !c.item || c.offset < 0) continue; // separador de línea
+      const ultimo = segmentos[segmentos.length - 1];
+      if (ultimo && ultimo.item === c.item && ultimo.fin === c.offset) {
+        ultimo.fin = c.offset + 1;
+      } else {
+        segmentos.push({ item: c.item, ini: c.offset, fin: c.offset + 1 });
+      }
+    }
+
+    const salida: RectanguloResaltado[] = [];
+    for (const seg of segmentos) {
+      // Recortar espacios de los extremos para no pintar aire suelto.
+      let ini = seg.ini;
+      let fin = seg.fin;
+      while (ini < fin && /\s/.test(seg.item.str[ini])) ini++;
+      while (fin > ini && /\s/.test(seg.item.str[fin - 1])) fin--;
+      if (fin <= ini) continue;
+
+      const x0 = seg.item.x + seg.item.ancho * fraccionAncho(seg.item, ini);
+      const x1 = seg.item.x + seg.item.ancho * fraccionAncho(seg.item, fin);
+      const y = seg.item.yBase - seg.item.ascent;
+      const ancho = x1 - x0;
+      if (![x0, y, ancho].every(Number.isFinite) || ancho <= 0) continue;
+
+      const anterior = salida[salida.length - 1];
+      // Fusionar sólo dentro de la misma línea (misma baseline).
+      if (
+        anterior &&
+        Math.abs(anterior.y - y) < TOLERANCIA_Y &&
+        x0 - (anterior.x + anterior.width) < UMBRAL_FUSION
+      ) {
+        anterior.width = Math.max(anterior.width, x1 - anterior.x);
+        anterior.height = Math.max(anterior.height, seg.item.alto * 1.15);
+      } else {
+        salida.push({
+          x: x0,
+          y,
+          width: Math.max(ancho, 2),
+          height: seg.item.alto * 1.15,
+          foco,
+        });
+      }
+    }
+    return salida;
+  };
+
+  if (!rangoFoco) {
+    // Sin fragmento puntual: se resalta el paso entero con intensidad normal.
+    return rectsDeRango(desdePaso, caracteres.length, true);
+  }
+
+  // Con fragmento: el paso entero queda como contexto suave y el fragmento
+  // señalado se dibuja encima con intensidad fuerte.
+  return [
+    ...rectsDeRango(desdePaso, caracteres.length, false),
+    ...rectsDeRango(rangoFoco.desde, rangoFoco.hasta, true),
+  ];
 }

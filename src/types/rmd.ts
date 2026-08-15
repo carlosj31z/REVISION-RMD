@@ -28,6 +28,9 @@ export type SeccionGeneral = "precauciones" | "notas_importantes" | "equipos_ins
 export interface DestinoPdf {
   pasoId?: string | null;
   seccionGeneral?: SeccionGeneral | null;
+  // Cita textual de lo observado dentro del paso: permite al visor resaltar
+  // el fragmento exacto a corregir, no sólo el paso entero.
+  textoBuscado?: string | null;
 }
 
 // ---------- Estructura extraída de un PDF (sin sección 6 de firmas) ----------

@@ -362,7 +362,13 @@ export default function Home() {
         const paso = vista.rmd.procedimiento.find((p) => p.id === destino.pasoId);
         if (paso?.pagina) {
           const pasoId = destino.pasoId;
-          setSaltoPdf((prev) => ({ pagina: paso.pagina!, pasoId, token: (prev?.token ?? 0) + 1 }));
+          const textoBuscado = destino.textoBuscado ?? null;
+          setSaltoPdf((prev) => ({
+            pagina: paso.pagina!,
+            pasoId,
+            textoBuscado,
+            token: (prev?.token ?? 0) + 1,
+          }));
           return;
         }
       }

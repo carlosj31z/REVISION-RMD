@@ -174,7 +174,15 @@ export function PanelDiscrepancias({
                   activo={pasoResaltado === pasoClave}
                   onHover={() => onHoverPaso(pasoClave)}
                   onLeave={() => onHoverPaso(null)}
-                  onIrAPaso={() => onIrAPaso({ pasoId: d.pasoId, seccionGeneral: d.seccionGeneral })}
+                  onIrAPaso={() =>
+                    onIrAPaso({
+                      pasoId: d.pasoId,
+                      seccionGeneral: d.seccionGeneral,
+                      // Lo que HOY dice el RMD en ese punto: es exactamente
+                      // el fragmento que hay que corregir.
+                      textoBuscado: d.textoVigenteEnRMD,
+                    })
+                  }
                   estado={estadosSeguimiento[pasoClave] ?? "pendiente"}
                   onCambiarEstado={(estado) => onCambiarEstado(pasoClave, estado)}
                   retraso={Math.min(i, 8) * 25}
