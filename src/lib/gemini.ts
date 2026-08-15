@@ -558,6 +558,124 @@ function validarYCompletarResultadoBorrador(
 }
 
 // ============================================================
+// Verificación de cumplimiento SIN borrador: el analista sube el RMD
+// corregido en el apartado "RMD Corregido" pero no adjunta un borrador de
+// Producción contra el cual compararlo
+// ============================================================
+// A diferencia de compararRMDvsBorrador (que necesita DOS documentos), esto
+// audita UN SOLO RMD contra las reglas permanentes de homologación, las
+// citas cruzadas internas, el cuadre de insumos y el maestro de equipos —
+// exactamente las mismas verificaciones "de fondo" que ya corren dentro de
+// las otras dos comparaciones, pero sin necesitar un segundo documento.
+// Reutiliza deliberadamente el mismo contrato de salida que
+// compararRMDvsBorrador (ResultadoComparacionBorrador / responseSchemaBorrador)
+// para poder reciclar toda la UI de resultados sin cambios: pasoIdBorrador y
+// textoEnBorrador quedan siempre en null, y "coincidenciaPorcentaje" pasa a
+// representar CUMPLIMIENTO (100 = ninguna violación encontrada).
+
+const SYSTEM_PROMPT_VERIFICACION_SOLA = `Eres un Auditor de Calidad Farmacéutica (QA) especializado en revisión de Registros de Manufactura Digital (RMD) bajo normativa BPM/GMP, trabajando para una planta farmacéutica peruana (Medifarma).
+
+## TU ÚNICA FUNCIÓN
+Te entregan UN SOLO RMD — no hay un segundo documento (ni un vigente, ni un borrador, ni un Control de Cambio) contra el cual compararlo. Tu trabajo es auditar este documento por sí solo contra cuatro cosas concretas:
+1. Las REGLAS PERMANENTES DE HOMOLOGACIÓN que te entregan (instrucciones fijas del tipo "el término A debe reemplazarse por B").
+2. Que las citas cruzadas internas entre pasos (ej. "según lo indicado en el paso 4.2.5") apunten a un paso que existe y cuyo contenido corresponde a lo que la cita espera encontrar ahí.
+3. Que la suma de cantidades de insumos citadas en el procedimiento (sección 4) cuadre con la cantidad total declarada en la tabla de insumos (sección 2).
+4. Que ningún paso involucre un equipo marcado como RETIRADO en el maestro de equipos.
+
+NO inventes una comparación que no existe: no hay "otro documento" con el que contrastar, así que NUNCA reportes algo como "cambió respecto a..." o "el borrador decía...". Si el RMD no viola ninguna de las 4 cosas de arriba, reportalo así — no busques defectos que no están relacionados con estas 4 verificaciones.
+
+## REGLAS ABSOLUTAS (no negociables)
+
+1. **Solo reglas permanentes, citas cruzadas, cuadre de insumos y equipos retirados — nada más.** No evalúes redacción, no opines si el documento "está bien" en general, no analices el encabezado (código, versión, edición, estado, fecha de estado, autorizado por, teórico).
+
+2. **Violación de regla permanente → "tipoDiferencia": "termino_sin_homologar".** Usa "pasoIdVigente" para el paso donde aparece el texto que viola la regla ("N/A" si aplica a todo el documento y no a un paso puntual — ej. precauciones, notas importantes). "pasoIdBorrador" y "textoEnBorrador" van SIEMPRE en null (no hay borrador). "textoEnVigente" debe ser una cita fiel del texto que viola la regla. "justificacion" debe citar la regla permanente textual que se está violando.
+
+3. **Citas cruzadas rotas y cuadre de insumos van en "alertasCoherencia"**, tipo "referencia_cruzada_rota" o "cantidad_insumo_no_cuadra" respectivamente — mismo criterio que en cualquier otra revisión: para citas cruzadas, verifica que el pasoId citado exista y que su contenido corresponda a lo que la cita espera; para insumos, suma las cantidades numéricas citadas en el procedimiento y compará contra el total de la sección 2 (margen de redondeo razonable ±0.5%, y sólo cuando hay cantidades numéricas explícitas).
+
+4. **Equipo retirado en uso → "alertaCoherencia" tipo "equipo_retirado_en_uso"**, y además marca "involucraEquipoRetirado": true en cualquier diferencia relacionada con ese paso.
+
+5. **Cero alucinación.** Si no encontrás ninguna violación de las 4 verificaciones, "diferenciasDetectadas" y "alertasCoherencia" pueden quedar vacíos — eso es un resultado válido y esperado, no un error.
+
+6. **"coincidenciaPorcentaje" representa CUMPLIMIENTO, no similitud.** 100 = no encontraste ninguna violación. Baja en proporción a la cantidad y severidad de violaciones reales encontradas (una regla permanente violada en varios pasos pesa más que una sola vez).
+
+7. **JSON estricto, nada de texto libre.** Tu respuesta completa debe ser un único objeto JSON válido que cumpla exactamente el schema proporcionado. No agregues explicaciones antes o después del JSON. No uses markdown ni bloques de código.
+
+8. **Idioma.** Todo el contenido textual debe estar en español, en el registro imperativo/normativo propio de un documento BPM.
+
+## SECCIÓN Y ETAPA
+Debes identificar a qué SECCIÓN de producto (SOLIDOS, ACONDICIONADO, CAPSULAS_BLANDAS, COSMETICOS, INY_HORMONALES, MENTHOLATUM, POLVOS_EFERVESCENTES, SEMISOLIDOS, SEMISOLIDOS_HORM, SOLIDOS_HORMONALES, SOLIDOS_4) y a qué ETAPA (FABRICACION, RECUBRIMIENTO, ENVASE, ACONDICIONADO) pertenece el RMD. Si no podés determinarlo con confianza, usa "NO_IDENTIFICADA" y explicá por qué en el resumen ejecutivo.`;
+
+export interface VerificacionSolaInput {
+  rmd: RMDExtraido;
+  pdfBase64?: string;
+  equiposMaestro: EquipoMaestro[];
+  reglas: ReglaHomologacion[];
+}
+
+export async function verificarCumplimientoSolo(
+  input: VerificacionSolaInput
+): Promise<ResultadoComparacionBorrador> {
+  const genAI = getClient();
+  const model = genAI.getGenerativeModel({
+    model: "gemini-flash-latest",
+    systemInstruction: SYSTEM_PROMPT_VERIFICACION_SOLA,
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: responseSchemaBorrador as any,
+      temperature: 0.1,
+    },
+  });
+
+  const equiposRetirados = input.equiposMaestro.filter((e) => !e.activo);
+  const equiposActivos = input.equiposMaestro.filter((e) => e.activo);
+
+  const parts: any[] = [
+    {
+      text: `## MAESTRO DE EQUIPOS (fuente de verdad)
+
+Equipos RETIRADOS (inactivos, no deben aparecer en pasos vigentes ni nuevos):
+${equiposRetirados.map((e) => `- ${e.codigo}: ${e.descripcion}`).join("\n") || "(ninguno registrado como retirado)"}
+
+Equipos ACTIVOS:
+${equiposActivos.map((e) => `- ${e.codigo}: ${e.descripcion}`).join("\n") || "(sin registros)"}
+
+## REGLAS PERMANENTES DE HOMOLOGACIÓN (aplican siempre)
+
+${formatearReglas(input.reglas)}
+
+## RMD A VERIFICAR (estructura extraída, sección 6 de firmas ya excluida — el encabezado NO es objeto de revisión)
+
+${JSON.stringify(input.rmd, null, 2)}`,
+    },
+  ];
+
+  if (input.pdfBase64) {
+    parts.push({
+      inlineData: { mimeType: "application/pdf", data: input.pdfBase64 },
+    });
+    parts.push({ text: "↑ PDF original del RMD, como respaldo visual del layout." });
+  }
+
+  const result = await conReintentos(() =>
+    model.generateContent({ contents: [{ role: "user", parts }] })
+  );
+
+  const raw = result.response.text();
+
+  let parsed: ResultadoComparacionBorrador;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `Gemini devolvió una respuesta que no es JSON válido. Esto no debería ocurrir con ` +
+        `responseSchema activo; revisa el modelo o los límites de tokens. Respuesta cruda: ${raw.slice(0, 500)}`
+    );
+  }
+
+  return validarYCompletarResultadoBorrador(parsed, input.equiposMaestro);
+}
+
+// ============================================================
 // Verificación de corrección: el analista sube el RMD ya corregido en SAP
 // ============================================================
 // A diferencia de las dos comparaciones de arriba (que generan una lista

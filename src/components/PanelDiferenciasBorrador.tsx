@@ -24,6 +24,10 @@ interface Props {
   estadosSeguimiento: Record<string, EstadoSeguimiento>;
   onCambiarEstado: (pasoId: string, estado: EstadoSeguimiento) => void;
   verificacionCorreccion: Record<string, Verificacion>;
+  // false = se subió el RMD corregido sin borrador: esto es una
+  // verificación de cumplimiento (reglas permanentes + documentos
+  // obsoletos), no una comparación contra otro documento.
+  conBorrador: boolean;
 }
 
 const TIPO_LABEL: Record<DiferenciaBorrador["tipoDiferencia"], string> = {
@@ -67,6 +71,7 @@ export function PanelDiferenciasBorrador({
   estadosSeguimiento,
   onCambiarEstado,
   verificacionCorreccion,
+  conBorrador,
 }: Props) {
   const diferenciasReales = resultado.diferenciasDetectadas.filter(
     (d) => d.tipoDiferencia !== "sin_diferencia"
@@ -91,16 +96,28 @@ export function PanelDiferenciasBorrador({
     <div className="flex h-full min-h-0 flex-col bg-paper">
       <header className="material-chrome-white z-10 border-b border-line/70 px-5 py-4 shadow-soft">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
-          Diferencias vs. borrador de Producción
+          {conBorrador
+            ? "Diferencias vs. borrador de Producción"
+            : "Verificación de cumplimiento (sin borrador)"}
         </p>
         <div className="mt-1.5 flex items-center gap-3">
-          <ScoreCoincidencia scoreActual={scoreActual} scoreOriginal={resultado.coincidenciaPorcentaje} />
+          <ScoreCoincidencia
+            scoreActual={scoreActual}
+            scoreOriginal={resultado.coincidenciaPorcentaje}
+            etiqueta={conBorrador ? "% de coincidencia" : "% de cumplimiento"}
+          />
           <span className="text-[12px] text-muted">
-            {diferenciasReales.length} diferencia
+            {diferenciasReales.length} {conBorrador ? "diferencia" : "observación"}
             {diferenciasReales.length !== 1 ? "s" : ""} detectada
             {diferenciasReales.length !== 1 ? "s" : ""}
           </span>
         </div>
+        {!conBorrador && (
+          <p className="mt-2 text-[12px] text-muted">
+            Se verificó contra las reglas permanentes y el maestro de documentos obsoletos — no
+            se comparó contra ningún otro documento.
+          </p>
+        )}
         {verificaciones.length > 0 && (
           <p className="mt-2 text-[12px] text-muted">
             Última verificación: <span className="font-medium text-system">{totalCorregidas} corregidas</span>
@@ -158,7 +175,9 @@ export function PanelDiferenciasBorrador({
               <IconoCheck />
             </span>
             <p className="text-[13px] text-muted">
-              No se detectaron diferencias entre el RMD vigente y el borrador de Producción.
+              {conBorrador
+                ? "No se detectaron diferencias entre el RMD vigente y el borrador de Producción."
+                : "No se detectaron violaciones de reglas permanentes ni documentos obsoletos citados."}
             </p>
           </div>
         ) : (
@@ -196,7 +215,15 @@ export function PanelDiferenciasBorrador({
   );
 }
 
-function ScoreCoincidencia({ scoreActual, scoreOriginal }: { scoreActual: number; scoreOriginal: number }) {
+function ScoreCoincidencia({
+  scoreActual,
+  scoreOriginal,
+  etiqueta,
+}: {
+  scoreActual: number;
+  scoreOriginal: number;
+  etiqueta: string;
+}) {
   const redondeado = Math.round(scoreActual);
   const color =
     redondeado >= 80 ? "text-system" : redondeado >= 50 ? "text-severidad-alta" : "text-severidad-critica";
@@ -208,7 +235,7 @@ function ScoreCoincidencia({ scoreActual, scoreOriginal }: { scoreActual: number
       >
         {redondeado}
       </span>
-      <span className="text-[11px] text-muted">% de coincidencia</span>
+      <span className="text-[11px] text-muted">{etiqueta}</span>
       {redondeado !== Math.round(scoreOriginal) && (
         <span className="text-[11px] text-muted/70">(inicial: {Math.round(scoreOriginal)})</span>
       )}

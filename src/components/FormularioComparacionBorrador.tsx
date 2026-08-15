@@ -22,16 +22,18 @@ const ETAPAS = ["FABRICACION", "RECUBRIMIENTO", "ENVASE", "ACONDICIONADO"] as co
 interface Props {
   onIniciarComparacion: (input: {
     rmdVigenteFile: File;
-    rmdBorradorFile: File;
+    rmdBorradorFile?: File;
     seccion: string;
     etapa: string;
   }) => void;
   cargando: boolean;
   // "vigente" (por defecto): flujo normal, el documento autorizado hoy vs.
-  // el borrador que propone Producción. "corregido": atajo para cuando el
-  // analista ya armó su propia versión corregida/actualizada y solo quiere
-  // confirmar que coincide con lo que Producción propuso, sin pasar primero
-  // por la comparación contra el vigente.
+  // el borrador que propone Producción — acá el borrador es obligatorio.
+  // "corregido": atajo para cuando el analista ya armó su propia versión
+  // corregida/actualizada. El borrador es OPCIONAL: si lo adjunta, se
+  // compara contra él; si NO lo adjunta, se entiende que quiere verificar
+  // el RMD corregido por sí solo contra las reglas permanentes y que no
+  // cite documentos obsoletos (ver PanelDiferenciasBorrador/verificarCumplimientoSolo).
   variante?: "vigente" | "corregido";
 }
 
@@ -48,7 +50,7 @@ const COPIA_POR_VARIANTE = {
     placeholderPrimerDocumento: "Selecciona el PDF del RMD vigente",
   },
   corregido: {
-    eyebrow: "Verificar contra el borrador",
+    eyebrow: "Verificar RMD corregido",
     titulo: "RMD corregido vs. borrador de Producción",
     descripcion:
       "Si ya armaste tu propia versión corregida/actualizada del RMD, subila acá " +
@@ -70,14 +72,20 @@ export function FormularioComparacionBorrador({
   const [seccion, setSeccion] = useState<string>("SOLIDOS");
   const [etapa, setEtapa] = useState<string>("FABRICACION");
   const copia = COPIA_POR_VARIANTE[variante];
+  const borradorOpcional = variante === "corregido";
 
-  const puedeEnviar = !!rmdVigenteFile && !!rmdBorradorFile;
+  const puedeEnviar = !!rmdVigenteFile && (!!rmdBorradorFile || borradorOpcional);
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault();
-      if (!puedeEnviar || !rmdVigenteFile || !rmdBorradorFile) return;
-      onIniciarComparacion({ rmdVigenteFile, rmdBorradorFile, seccion, etapa });
+      if (!puedeEnviar || !rmdVigenteFile) return;
+      onIniciarComparacion({
+        rmdVigenteFile,
+        rmdBorradorFile: rmdBorradorFile ?? undefined,
+        seccion,
+        etapa,
+      });
     },
     [rmdVigenteFile, rmdBorradorFile, seccion, etapa, puedeEnviar, onIniciarComparacion]
   );
@@ -105,8 +113,12 @@ export function FormularioComparacionBorrador({
         </Campo>
 
         <Campo
-          label="Borrador de Producción (PDF)"
-          descripcion="La versión propuesta que Producción envió para la próxima actualización."
+          label={`Borrador de Producción (PDF)${borradorOpcional ? " — opcional" : ""}`}
+          descripcion={
+            borradorOpcional
+              ? "Si lo adjuntás, se compara el RMD corregido contra este borrador."
+              : "La versión propuesta que Producción envió para la próxima actualización."
+          }
         >
           <InputArchivo
             file={rmdBorradorFile}
@@ -114,6 +126,14 @@ export function FormularioComparacionBorrador({
             accept="application/pdf"
             placeholder="Selecciona el PDF del borrador"
           />
+          {borradorOpcional && !rmdBorradorFile && (
+            <p className="mt-2 rounded-lg border border-system/25 bg-system-tint px-3 py-2 text-[12px] leading-relaxed text-system">
+              Sin borrador: se va a verificar que el RMD corregido cumpla las{" "}
+              <strong className="font-semibold">reglas permanentes</strong> y que no cite{" "}
+              <strong className="font-semibold">documentos obsoletos</strong> — no se compara
+              contra ningún otro documento.
+            </p>
+          )}
         </Campo>
 
         <div className="grid grid-cols-2 gap-4">
@@ -147,7 +167,11 @@ export function FormularioComparacionBorrador({
       </div>
 
       <BotonPrimario disabled={!puedeEnviar || cargando}>
-        {cargando ? "Comparando…" : "Comparar documentos"}
+        {cargando
+          ? "Procesando…"
+          : borradorOpcional && !rmdBorradorFile
+            ? "Verificar cumplimiento"
+            : "Comparar documentos"}
       </BotonPrimario>
     </form>
   );

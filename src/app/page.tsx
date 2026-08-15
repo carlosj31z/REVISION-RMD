@@ -39,6 +39,10 @@ type VistaActual =
       pdfUrl: string;
       resultado: ResultadoComparacionBorrador;
       revisionId: string | null;
+      // false = se subió el RMD "corregido" sin borrador: el resultado es
+      // una verificación de cumplimiento (reglas permanentes + documentos
+      // obsoletos), no una comparación contra otro documento.
+      conBorrador: boolean;
     };
 
 type VistaResultado = Extract<VistaActual, { tipo: "resultado" | "resultado-borrador" }>;
@@ -154,7 +158,7 @@ export default function Home() {
   const iniciarComparacionBorrador = useCallback(
     async (input: {
       rmdVigenteFile: File;
-      rmdBorradorFile: File;
+      rmdBorradorFile?: File;
       seccion: string;
       etapa: string;
       // "vigente" (por defecto) o "corregido" — solo cambia el texto de
@@ -182,22 +186,32 @@ export default function Home() {
         const { estructura: estructuraVigente, pdfBase64: pdfVigenteBase64 } =
           await extractVigenteRes.json();
 
-        setVista({ tipo: "cargando", mensaje: "Extrayendo el borrador de Producción…" });
+        let estructuraBorrador: any = null;
+        let pdfBorradorBase64: string | undefined;
+        if (input.rmdBorradorFile) {
+          setVista({ tipo: "cargando", mensaje: "Extrayendo el borrador de Producción…" });
 
-        const formDataBorrador = new FormData();
-        formDataBorrador.append("file", input.rmdBorradorFile);
-        const extractBorradorRes = await fetch("/api/extract-pdf", {
-          method: "POST",
-          body: formDataBorrador,
-        });
-        if (!extractBorradorRes.ok) {
-          const err = await extractBorradorRes.json();
-          throw new Error(err.error ?? "No se pudo extraer el PDF del borrador.");
+          const formDataBorrador = new FormData();
+          formDataBorrador.append("file", input.rmdBorradorFile);
+          const extractBorradorRes = await fetch("/api/extract-pdf", {
+            method: "POST",
+            body: formDataBorrador,
+          });
+          if (!extractBorradorRes.ok) {
+            const err = await extractBorradorRes.json();
+            throw new Error(err.error ?? "No se pudo extraer el PDF del borrador.");
+          }
+          const data = await extractBorradorRes.json();
+          estructuraBorrador = data.estructura;
+          pdfBorradorBase64 = data.pdfBase64;
         }
-        const { estructura: estructuraBorrador, pdfBase64: pdfBorradorBase64 } =
-          await extractBorradorRes.json();
 
-        setVista({ tipo: "cargando", mensaje: "Comparando ambos documentos…" });
+        setVista({
+          tipo: "cargando",
+          mensaje: estructuraBorrador
+            ? "Comparando ambos documentos…"
+            : "Verificando reglas permanentes y documentos obsoletos…",
+        });
 
         const revisionRes = await fetch("/api/revision-borrador", {
           method: "POST",
@@ -205,7 +219,7 @@ export default function Home() {
           body: JSON.stringify({
             rmdVigente: estructuraVigente,
             pdfVigenteBase64,
-            rmdBorrador: estructuraBorrador,
+            rmdBorrador: estructuraBorrador ?? undefined,
             pdfBorradorBase64,
             seccionCodigo: input.seccion,
             etapaCodigo: input.etapa,
@@ -226,6 +240,7 @@ export default function Home() {
           pdfUrl: URL.createObjectURL(input.rmdVigenteFile),
           resultado: data.resultado,
           revisionId: data.revisionId ?? null,
+          conBorrador: !!estructuraBorrador,
         });
       } catch (err: any) {
         setVista({ tipo: "error", mensaje: err.message ?? "Ocurrió un error inesperado." });
@@ -609,6 +624,7 @@ export default function Home() {
               estadosSeguimiento={estadosSeguimiento}
               onCambiarEstado={cambiarEstadoSeguimiento}
               verificacionCorreccion={verificacionCorreccion}
+              conBorrador={vista.conBorrador}
             />
           )}
         </div>
