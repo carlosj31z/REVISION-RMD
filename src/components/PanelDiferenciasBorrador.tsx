@@ -28,6 +28,12 @@ interface Props {
   // verificación de cumplimiento (reglas permanentes + documentos
   // obsoletos), no una comparación contra otro documento.
   conBorrador: boolean;
+  // Abre el modal "ver en el borrador" saltando al punto exacto de esa
+  // diferencia dentro del PDF del borrador (no del vigente).
+  onVerEnBorrador: (destino: DestinoPdf) => void;
+  // true solo cuando el PDF del borrador sigue en memoria (se subió un
+  // borrador real, no el flujo "RMD corregido sin borrador").
+  puedeVerBorrador: boolean;
 }
 
 const TIPO_LABEL: Record<DiferenciaBorrador["tipoDiferencia"], string> = {
@@ -74,6 +80,8 @@ export function PanelDiferenciasBorrador({
   onCambiarEstado,
   verificacionCorreccion,
   conBorrador,
+  onVerEnBorrador,
+  puedeVerBorrador,
 }: Props) {
   const diferenciasReales = resultado.diferenciasDetectadas.filter(
     (d) => d.tipoDiferencia !== "sin_diferencia"
@@ -203,6 +211,16 @@ export function PanelDiferenciasBorrador({
                       textoBuscado: d.textoEnVigente,
                     })
                   }
+                  onVerEnBorrador={
+                    puedeVerBorrador && (d.pasoIdBorrador || d.seccionGeneral)
+                      ? () =>
+                          onVerEnBorrador({
+                            pasoId: d.pasoIdBorrador,
+                            seccionGeneral: d.seccionGeneral,
+                            textoBuscado: d.textoEnBorrador,
+                          })
+                      : null
+                  }
                   estado={estadosSeguimiento[pasoClave] ?? "pendiente"}
                   onCambiarEstado={(estado) => onCambiarEstado(pasoClave, estado)}
                   retraso={Math.min(i, 8) * 25}
@@ -251,6 +269,7 @@ function TarjetaDiferencia({
   onHover,
   onLeave,
   onIrAPaso,
+  onVerEnBorrador,
   estado,
   onCambiarEstado,
   retraso,
@@ -261,6 +280,7 @@ function TarjetaDiferencia({
   onHover: () => void;
   onLeave: () => void;
   onIrAPaso: () => void;
+  onVerEnBorrador: (() => void) | null;
   estado: EstadoSeguimiento;
   onCambiarEstado: (estado: EstadoSeguimiento) => void;
   retraso: number;
@@ -293,7 +313,21 @@ function TarjetaDiferencia({
             {TIPO_LABEL[diferencia.tipoDiferencia]}
           </span>
         </div>
-        <BadgeConfianza nivel={diferencia.nivelConfianza} />
+        <div className="flex shrink-0 items-center gap-1.5">
+          {onVerEnBorrador && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onVerEnBorrador();
+              }}
+              title="Ver en el borrador"
+              className="rounded p-1 text-muted transition-all duration-150 ease-spring hover:bg-system-tint hover:text-system active:scale-95"
+            >
+              <IconoOjo />
+            </button>
+          )}
+          <BadgeConfianza nivel={diferencia.nivelConfianza} />
+        </div>
       </div>
 
       <p className="mt-1.5 text-[13px] leading-snug text-ink/80">{diferencia.ubicacionReferencia}</p>
@@ -403,6 +437,25 @@ function BotonEstado({
     >
       {label}
     </button>
+  );
+}
+
+function IconoOjo() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="15"
+      height="15"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
   );
 }
 

@@ -6,6 +6,7 @@ import { FormularioComparacionBorrador } from "@/components/FormularioComparacio
 import { PanelRMDVigente } from "@/components/PanelRMDVigente";
 import { PanelDiscrepancias } from "@/components/PanelDiscrepancias";
 import { PanelDiferenciasBorrador } from "@/components/PanelDiferenciasBorrador";
+import { ModalVisorBorrador } from "@/components/ModalVisorBorrador";
 import { PanelReglas } from "@/components/PanelReglas";
 import { PanelDocumentosObsoletos } from "@/components/PanelDocumentosObsoletos";
 import { ToggleTema } from "@/components/ui/ToggleTema";
@@ -43,6 +44,11 @@ type VistaActual =
       // una verificación de cumplimiento (reglas permanentes + documentos
       // obsoletos), no una comparación contra otro documento.
       conBorrador: boolean;
+      // Presentes solo cuando conBorrador es true: permiten abrir el modal
+      // "ver en el borrador" desde una tarjeta de diferencia, sin necesidad
+      // de volver a subir el archivo.
+      pdfBorradorUrl?: string;
+      rmdBorrador?: RMDExtraido;
     };
 
 type VistaResultado = Extract<VistaActual, { tipo: "resultado" | "resultado-borrador" }>;
@@ -71,6 +77,8 @@ export default function Home() {
 
   const [pasoResaltado, setPasoResaltado] = useState<string | null>(null);
   const [saltoPdf, setSaltoPdf] = useState<SaltoPdf | null>(null);
+  // Salto pendiente dentro del modal "ver en el borrador" — no null = modal abierto.
+  const [modalBorrador, setModalBorrador] = useState<SaltoPdf | null>(null);
   const [estadosSeguimiento, setEstadosSeguimiento] = useState<Record<string, EstadoSeguimiento>>(
     {}
   );
@@ -234,6 +242,7 @@ export default function Home() {
         const data = await revisionRes.json();
 
         setSaltoPdf(null);
+        setModalBorrador(null);
         setVista({
           tipo: "resultado-borrador",
           rmd: estructuraVigente,
@@ -241,6 +250,10 @@ export default function Home() {
           resultado: data.resultado,
           revisionId: data.revisionId ?? null,
           conBorrador: !!estructuraBorrador,
+          pdfBorradorUrl: input.rmdBorradorFile
+            ? URL.createObjectURL(input.rmdBorradorFile)
+            : undefined,
+          rmdBorrador: estructuraBorrador ?? undefined,
         });
       } catch (err: any) {
         setVista({ tipo: "error", mensaje: err.message ?? "Ocurrió un error inesperado." });
@@ -398,14 +411,52 @@ export default function Home() {
     [vista]
   );
 
+  // Igual que irAPasoEnPdf, pero resuelve la ubicación contra la estructura
+  // del BORRADOR (no la del vigente) y abre el modal en vez de navegar en el
+  // visor principal. Solo aplica cuando la vista actual comparó contra un
+  // borrador real (conBorrador) y su PDF sigue en memoria.
+  const verEnBorrador = useCallback(
+    (destino: DestinoPdf) => {
+      if (vista.tipo !== "resultado-borrador" || !vista.rmdBorrador || !vista.pdfBorradorUrl) return;
+      const rmdBorrador = vista.rmdBorrador;
+
+      if (destino.pasoId && destino.pasoId !== "N/A") {
+        const paso = rmdBorrador.procedimiento.find((p) => p.id === destino.pasoId);
+        if (paso?.pagina) {
+          const pasoId = destino.pasoId;
+          const textoBuscado = destino.textoBuscado ?? null;
+          setModalBorrador((prev) => ({
+            pagina: paso.pagina!,
+            pasoId,
+            textoBuscado,
+            token: (prev?.token ?? 0) + 1,
+          }));
+          return;
+        }
+      }
+
+      if (destino.seccionGeneral) {
+        const pagina = rmdBorrador.paginasSeccionesGenerales[destino.seccionGeneral];
+        if (pagina) {
+          setModalBorrador((prev) => ({ pagina, token: (prev?.token ?? 0) + 1 }));
+        }
+      }
+    },
+    [vista]
+  );
+
   const volverACarga = useCallback(() => {
     setVista((prev) => {
       if (prev.tipo === "resultado" || prev.tipo === "resultado-borrador") {
         URL.revokeObjectURL(prev.pdfUrl);
+        if (prev.tipo === "resultado-borrador" && prev.pdfBorradorUrl) {
+          URL.revokeObjectURL(prev.pdfBorradorUrl);
+        }
       }
       return { tipo: "carga" };
     });
     setSaltoPdf(null);
+    setModalBorrador(null);
     setVerificacionCorreccion({});
     setErrorVerificacion(null);
   }, []);
@@ -416,6 +467,7 @@ export default function Home() {
       setRevisionMinimizada(prev);
       return { tipo: "carga" };
     });
+    setModalBorrador(null);
   }, []);
 
   const restaurarRevision = useCallback(() => {
@@ -427,7 +479,12 @@ export default function Home() {
 
   const descartarRevisionMinimizada = useCallback(() => {
     setRevisionMinimizada((prev) => {
-      if (prev) URL.revokeObjectURL(prev.pdfUrl);
+      if (prev) {
+        URL.revokeObjectURL(prev.pdfUrl);
+        if (prev.tipo === "resultado-borrador" && prev.pdfBorradorUrl) {
+          URL.revokeObjectURL(prev.pdfBorradorUrl);
+        }
+      }
       return null;
     });
   }, []);
@@ -625,9 +682,18 @@ export default function Home() {
               onCambiarEstado={cambiarEstadoSeguimiento}
               verificacionCorreccion={verificacionCorreccion}
               conBorrador={vista.conBorrador}
+              onVerEnBorrador={verEnBorrador}
+              puedeVerBorrador={!!vista.pdfBorradorUrl}
             />
           )}
         </div>
+        {vista.tipo === "resultado-borrador" && modalBorrador && vista.pdfBorradorUrl && (
+          <ModalVisorBorrador
+            pdfUrl={vista.pdfBorradorUrl}
+            salto={modalBorrador}
+            onClose={() => setModalBorrador(null)}
+          />
+        )}
       </div>
     );
   }
