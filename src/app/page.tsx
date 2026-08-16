@@ -44,6 +44,10 @@ type VistaActual =
       // una verificación de cumplimiento (reglas permanentes + documentos
       // obsoletos), no una comparación contra otro documento.
       conBorrador: boolean;
+      // true = el documento subido YA estaba corregido, así que las tarjetas
+      // son "indicaciones del borrador todavía pendientes", no "cambios
+      // propuestos". Cambia el prompt usado y las etiquetas del panel.
+      esCorregido: boolean;
       // Presentes solo cuando conBorrador es true: permiten abrir el modal
       // "ver en el borrador" desde una tarjeta de diferencia, sin necesidad
       // de volver a subir el archivo.
@@ -169,8 +173,11 @@ export default function Home() {
       rmdBorradorFile?: File;
       seccion: string;
       etapa: string;
-      // "vigente" (por defecto) o "corregido" — solo cambia el texto de
-      // carga mostrado, el flujo/endpoint es exactamente el mismo.
+      // "vigente": el primer documento todavía NO está corregido — se listan
+      // los cambios que el borrador propone.
+      // "corregido": el primer documento YA fue corregido por el analista — se
+      // verifica cuáles indicaciones del borrador siguen pendientes. Son
+      // tareas inversas y usan prompts distintos (ver /api/revision-borrador).
       variante?: "vigente" | "corregido";
     }) => {
       const etiquetaPrimerDocumento =
@@ -214,11 +221,14 @@ export default function Home() {
           pdfBorradorBase64 = data.pdfBase64;
         }
 
+        const esCorregido = input.variante === "corregido";
         setVista({
           tipo: "cargando",
-          mensaje: estructuraBorrador
-            ? "Comparando ambos documentos…"
-            : "Verificando reglas permanentes y documentos obsoletos…",
+          mensaje: !estructuraBorrador
+            ? "Verificando reglas permanentes y documentos obsoletos…"
+            : esCorregido
+              ? "Verificando qué indicaciones del borrador ya están aplicadas…"
+              : "Comparando ambos documentos…",
         });
 
         const revisionRes = await fetch("/api/revision-borrador", {
@@ -229,6 +239,7 @@ export default function Home() {
             pdfVigenteBase64,
             rmdBorrador: estructuraBorrador ?? undefined,
             pdfBorradorBase64,
+            modo: esCorregido ? "corregido_vs_borrador" : "vigente_vs_borrador",
             seccionCodigo: input.seccion,
             etapaCodigo: input.etapa,
           }),
@@ -250,6 +261,7 @@ export default function Home() {
           resultado: data.resultado,
           revisionId: data.revisionId ?? null,
           conBorrador: !!estructuraBorrador,
+          esCorregido,
           pdfBorradorUrl: input.rmdBorradorFile
             ? URL.createObjectURL(input.rmdBorradorFile)
             : undefined,
@@ -682,6 +694,7 @@ export default function Home() {
               onCambiarEstado={cambiarEstadoSeguimiento}
               verificacionCorreccion={verificacionCorreccion}
               conBorrador={vista.conBorrador}
+              esCorregido={vista.esCorregido}
               onVerEnBorrador={verEnBorrador}
               puedeVerBorrador={!!vista.pdfBorradorUrl}
             />

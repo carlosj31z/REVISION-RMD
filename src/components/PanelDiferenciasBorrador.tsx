@@ -28,6 +28,10 @@ interface Props {
   // verificación de cumplimiento (reglas permanentes + documentos
   // obsoletos), no una comparación contra otro documento.
   conBorrador: boolean;
+  // true = el documento subido YA venía corregido: cada tarjeta es una
+  // indicación del borrador que TODAVÍA no se aplicó (las ya aplicadas no se
+  // listan), no un cambio propuesto por Producción.
+  esCorregido: boolean;
   // Abre el modal "ver en el borrador" saltando al punto exacto de esa
   // diferencia dentro del PDF del borrador (no del vigente).
   onVerEnBorrador: (destino: DestinoPdf) => void;
@@ -80,9 +84,13 @@ export function PanelDiferenciasBorrador({
   onCambiarEstado,
   verificacionCorreccion,
   conBorrador,
+  esCorregido,
   onVerEnBorrador,
   puedeVerBorrador,
 }: Props) {
+  // Verificación de un RMD ya corregido contra el borrador: lo que queda
+  // listado son indicaciones pendientes de aplicar.
+  const verificandoCorregido = conBorrador && esCorregido;
   const diferenciasReales = resultado.diferenciasDetectadas.filter(
     (d) => d.tipoDiferencia !== "sin_diferencia"
   );
@@ -106,22 +114,46 @@ export function PanelDiferenciasBorrador({
     <div className="flex h-full min-h-0 flex-col bg-paper">
       <header className="material-chrome-white z-10 border-b border-line/70 px-5 py-4 shadow-soft">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
-          {conBorrador
-            ? "Diferencias vs. borrador de Producción"
-            : "Verificación de cumplimiento (sin borrador)"}
+          {verificandoCorregido
+            ? "Indicaciones del borrador pendientes de aplicar"
+            : conBorrador
+              ? "Diferencias vs. borrador de Producción"
+              : "Verificación de cumplimiento (sin borrador)"}
         </p>
         <div className="mt-1.5 flex items-center gap-3">
           <ScoreCoincidencia
             scoreActual={scoreActual}
             scoreOriginal={resultado.coincidenciaPorcentaje}
-            etiqueta={conBorrador ? "% de coincidencia" : "% de cumplimiento"}
+            etiqueta={
+              verificandoCorregido
+                ? "% ya aplicado"
+                : conBorrador
+                  ? "% de coincidencia"
+                  : "% de cumplimiento"
+            }
           />
           <span className="text-[12px] text-muted">
-            {diferenciasReales.length} {conBorrador ? "diferencia" : "observación"}
-            {diferenciasReales.length !== 1 ? "s" : ""} detectada
-            {diferenciasReales.length !== 1 ? "s" : ""}
+            {verificandoCorregido ? (
+              <>
+                {diferenciasReales.length} indicación
+                {diferenciasReales.length !== 1 ? "es" : ""} pendiente
+                {diferenciasReales.length !== 1 ? "s" : ""}
+              </>
+            ) : (
+              <>
+                {diferenciasReales.length} {conBorrador ? "diferencia" : "observación"}
+                {diferenciasReales.length !== 1 ? "s" : ""} detectada
+                {diferenciasReales.length !== 1 ? "s" : ""}
+              </>
+            )}
           </span>
         </div>
+        {verificandoCorregido && (
+          <p className="mt-2 text-[12px] text-muted">
+            Se verificó tu RMD corregido contra las indicaciones del borrador. Lo que ya aplicaste
+            no aparece en la lista.
+          </p>
+        )}
         {!conBorrador && (
           <p className="mt-2 text-[12px] text-muted">
             Se verificó contra las reglas permanentes y el maestro de documentos obsoletos — no
@@ -185,9 +217,11 @@ export function PanelDiferenciasBorrador({
               <IconoCheck />
             </span>
             <p className="text-[13px] text-muted">
-              {conBorrador
-                ? "No se detectaron diferencias entre el RMD vigente y el borrador de Producción."
-                : "No se detectaron violaciones de reglas permanentes ni documentos obsoletos citados."}
+              {verificandoCorregido
+                ? "Tu RMD corregido ya incorpora todas las indicaciones del borrador de Producción. No queda nada pendiente."
+                : conBorrador
+                  ? "No se detectaron diferencias entre el RMD vigente y el borrador de Producción."
+                  : "No se detectaron violaciones de reglas permanentes ni documentos obsoletos citados."}
             </p>
           </div>
         ) : (

@@ -53,9 +53,9 @@ const COPIA_POR_VARIANTE = {
     eyebrow: "Verificar RMD corregido",
     titulo: "RMD corregido vs. borrador de Producción",
     descripcion:
-      "Si ya armaste tu propia versión corregida/actualizada del RMD, subila acá " +
-      "directamente para confirmar que coincide con lo que Producción propuso en su " +
-      "borrador — sin pasar primero por la comparación contra el vigente.",
+      "Si ya editaste el RMD en SAP aplicando lo que pidió Producción, subilo acá " +
+      "para verificar qué indicaciones del borrador ya quedaron incorporadas y cuáles " +
+      "siguen pendientes. Lo que ya aplicaste no vuelve a aparecer como observación.",
     labelPrimerDocumento: "RMD corregido (PDF)",
     descripcionPrimerDocumento: "El documento ya actualizado que querés confirmar.",
     placeholderPrimerDocumento: "Selecciona el PDF del RMD corregido",

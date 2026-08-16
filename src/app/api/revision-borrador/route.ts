@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { compararRMDvsBorrador, verificarCumplimientoSolo, type EquipoMaestro } from "@/lib/gemini";
+import {
+  compararRMDvsBorrador,
+  verificarCorreccionVsBorrador,
+  verificarCumplimientoSolo,
+  type EquipoMaestro,
+} from "@/lib/gemini";
 import { getSupabaseServerClient } from "@/lib/supabaseClient";
 import { cargarReglasAplicables } from "@/lib/reglas";
 import {
@@ -19,6 +24,13 @@ interface RevisionBorradorRequestBody {
   // documentos obsoletos, sin comparar contra ningún borrador de Producción.
   rmdBorrador?: RMDExtraido;
   pdfBorradorBase64?: string;
+  // "vigente_vs_borrador" (por defecto): el primer documento todavía NO está
+  // corregido y se listan los cambios que el borrador propone.
+  // "corregido_vs_borrador": el primer documento YA fue corregido por el
+  // analista y lo que se verifica es cuáles indicaciones del borrador siguen
+  // pendientes. Son tareas inversas: usar el prompt equivocado hacía que todo
+  // apareciera como pendiente aunque ya estuviera aplicado.
+  modo?: "vigente_vs_borrador" | "corregido_vs_borrador";
   documentoId?: string;
   seccionCodigo?: string;
   etapaCodigo?: string;
@@ -63,8 +75,11 @@ export async function POST(req: NextRequest) {
     const equiposMaestro: EquipoMaestro[] = equiposData ?? [];
     const reglas = await cargarReglasAplicables(supabase, body.seccionCodigo, body.etapaCodigo);
 
+    const comparar =
+      body.modo === "corregido_vs_borrador" ? verificarCorreccionVsBorrador : compararRMDvsBorrador;
+
     const resultadoIA = body.rmdBorrador
-      ? await compararRMDvsBorrador({
+      ? await comparar({
           rmdVigente: body.rmdVigente,
           pdfVigenteBase64: body.pdfVigenteBase64,
           rmdBorrador: body.rmdBorrador,
