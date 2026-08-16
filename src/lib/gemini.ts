@@ -68,6 +68,10 @@ Comparar un RMD vigente (extraído de PDF) contra un Control de Cambio, No Confo
 
 12. **Cuadre de cantidades de insumos.** El procedimiento (sección 4) frecuentemente indica pesar/agregar cantidades numéricas específicas de un insumo en uno o más pasos (ej. "PESAR 5.250 kg de GLICERINA", "AGREGAR 22.080 g DE BHT"). Identifica cada mención de este tipo, agrupa por insumo, y SUMA las cantidades citadas en el procedimiento para cada insumo. Compara esa suma contra la cantidad total de ese mismo insumo declarada en la tabla de INSUMOS (sección 2 de la estructura, campos "cantidad"/"um"). Si la suma del procedimiento NO coincide con el total de la sección 2 (más allá de un margen de redondeo razonable, ej. ±0.5%), repórtalo como alertaCoherencia de tipo "cantidad_insumo_no_cuadra", severidad "alta", con "descripcion" indicando el insumo, la suma calculada a partir del procedimiento, y el total declarado en la sección 2. Si el procedimiento solo dice "agregar" un insumo sin cantidad numérica explícita, NO reportes esta alerta para ese insumo — compara únicamente cuando SÍ hay cantidades numéricas citadas en el procedimiento.
 
+13. **Todo equipo/instrumento/material listado debe estar preparado en el procedimiento.** La sección 1 (EQUIPOS/INSTRUMENTOS/MATERIALES) lista lo que se va a usar. Verifica que CADA UNO de esos equipos/instrumentos/materiales esté mencionado en algún punto de la sección 4 del procedimiento (que según la etapa del documento puede titularse "4.-FABRICACION", "4.-ENVASE", "4.-ACONDICIONADO" o "4.-RECUBRIMIENTO") — ya sea en un paso de preparación de máquinas/equipos (típicamente la subsección "4.2 Preparación de las máquinas o equipos", ej. "PREPARAR LA ENCAPSULADORA M/C 500R...") o en cualquier otro paso que indique que ese equipo se está preparando o usando. Si un equipo/instrumento/material de la sección 1 NO aparece mencionado en ningún paso del procedimiento, repórtalo como alertaCoherencia de tipo "equipo_sin_preparacion_registrada", severidad "alta", con "descripcion" indicando el código/descripción del equipo faltante y aclarando que no se encontró evidencia de su preparación en el procedimiento.
+
+14. **Nota de verificación presencial cuando el paso exige Visto Bueno (VB).** Cuando un paso del procedimiento tiene la casilla de Visto Bueno ("VB") junto al campo "REALIZADO POR" (podés apoyarte en el campo "requiereVB" de la estructura extraída, pero confirmalo con el PDF si está disponible), ese paso debe incluir textualmente la nota "NOTA: EL JEFE O SUPERVISOR DE LA SECCION DEBE VERIFICAR PRESENCIALMENTE LA ACTIVIDAD U OPERACION REALIZADA" (o una redacción que exprese exactamente lo mismo). Si el paso exige VB pero el texto NO incluye esa nota, repórtalo como alertaCoherencia de tipo "nota_vb_faltante", severidad "alta", con "pasosAfectados" incluyendo el pasoId, y "descripcion" explicando que falta la nota de verificación presencial del jefe o supervisor.
+
 ## SOBRE LA SECCIÓN 6 (Verificación de Firmas)
 El documento RMD que recibes YA viene sin la sección 6 (Verificación de Firmas) — fue excluida deliberadamente porque no es objeto de esta revisión. No la menciones ni la eches en falta.
 
@@ -144,6 +148,8 @@ const responseSchema = {
               "unidad_incoherente",
               "condicion_ambiental_contradictoria",
               "campo_control_faltante",
+              "equipo_sin_preparacion_registrada",
+              "nota_vb_faltante",
               "otro",
             ],
           },
@@ -351,6 +357,10 @@ Comparar dos versiones completas de un mismo RMD: el VIGENTE (el documento tal c
 
 13. **Cuadre de cantidades de insumos.** El procedimiento (sección 4) frecuentemente indica pesar/agregar cantidades numéricas específicas de un insumo (ej. "PESAR 5.250 kg de GLICERINA"). En AMBOS documentos, identifica cada mención con cantidad numérica, agrupa por insumo, suma las cantidades citadas en el procedimiento, y compara contra el total de ese insumo declarado en su tabla de INSUMOS (sección 2, campos "cantidad"/"um"). Si la suma del procedimiento no coincide con el total de la sección 2 correspondiente (más allá de un margen de redondeo razonable, ej. ±0.5%), repórtalo como alertaCoherencia de tipo "cantidad_insumo_no_cuadra", severidad "alta", indicando en "descripcion" el insumo, el documento (vigente o borrador), la suma calculada, y el total declarado. Si el procedimiento solo dice "agregar" un insumo sin cantidad numérica explícita, no reportes esta alerta para ese insumo.
 
+14. **Todo equipo/instrumento/material listado debe estar preparado en el procedimiento.** En AMBOS documentos, la sección 1 (EQUIPOS/INSTRUMENTOS/MATERIALES) lista lo que se va a usar. Verifica que CADA UNO de esos equipos/instrumentos/materiales esté mencionado en algún punto de la sección 4 del procedimiento (que según la etapa del documento puede titularse "4.-FABRICACION", "4.-ENVASE", "4.-ACONDICIONADO" o "4.-RECUBRIMIENTO") — ya sea en un paso de preparación de máquinas/equipos (típicamente la subsección "4.2 Preparación de las máquinas o equipos", ej. "PREPARAR LA ENCAPSULADORA M/C 500R...") o en cualquier otro paso que indique que ese equipo se está preparando o usando. Si un equipo/instrumento/material de la sección 1 de cualquiera de los dos documentos NO aparece mencionado en ningún paso del procedimiento de ese mismo documento, repórtalo como alertaCoherencia de tipo "equipo_sin_preparacion_registrada", severidad "alta", con "descripcion" indicando el código/descripción del equipo faltante, en cuál documento (vigente o borrador) falta, y aclarando que no se encontró evidencia de su preparación en el procedimiento.
+
+15. **Nota de verificación presencial cuando el paso exige Visto Bueno (VB).** En AMBOS documentos, cuando un paso del procedimiento tiene la casilla de Visto Bueno ("VB") junto al campo "REALIZADO POR" (podés apoyarte en el campo "requiereVB" de la estructura extraída, pero confirmalo con el PDF si está disponible), ese paso debe incluir textualmente la nota "NOTA: EL JEFE O SUPERVISOR DE LA SECCION DEBE VERIFICAR PRESENCIALMENTE LA ACTIVIDAD U OPERACION REALIZADA" (o una redacción que exprese exactamente lo mismo). Si el paso exige VB pero el texto NO incluye esa nota, repórtalo como alertaCoherencia de tipo "nota_vb_faltante", severidad "alta", con "pasosAfectados" incluyendo el pasoId (vigente o de borrador según corresponda), y "descripcion" explicando en cuál documento falta la nota de verificación presencial del jefe o supervisor.
+
 ## SECCIÓN Y ETAPA
 Debes identificar a qué SECCIÓN de producto (SOLIDOS, ACONDICIONADO, CAPSULAS_BLANDAS, COSMETICOS, INY_HORMONALES, MENTHOLATUM, POLVOS_EFERVESCENTES, SEMISOLIDOS, SEMISOLIDOS_HORM, SOLIDOS_HORMONALES, SOLIDOS_4) y a qué ETAPA (FABRICACION, RECUBRIMIENTO, ENVASE, ACONDICIONADO) pertenece el RMD, basándote en el encabezado del documento vigente. Si no puedes determinarlo con confianza, usa "NO_IDENTIFICADA" y explica por qué en el resumen ejecutivo.`;
 
@@ -427,6 +437,8 @@ const responseSchemaBorrador = {
               "unidad_incoherente",
               "condicion_ambiental_contradictoria",
               "campo_control_faltante",
+              "equipo_sin_preparacion_registrada",
+              "nota_vb_faltante",
               "otro",
             ],
           },
@@ -576,17 +588,19 @@ function validarYCompletarResultadoBorrador(
 const SYSTEM_PROMPT_VERIFICACION_SOLA = `Eres un Auditor de Calidad Farmacéutica (QA) especializado en revisión de Registros de Manufactura Digital (RMD) bajo normativa BPM/GMP, trabajando para una planta farmacéutica peruana (Medifarma).
 
 ## TU ÚNICA FUNCIÓN
-Te entregan UN SOLO RMD — no hay un segundo documento (ni un vigente, ni un borrador, ni un Control de Cambio) contra el cual compararlo. Tu trabajo es auditar este documento por sí solo contra cuatro cosas concretas:
+Te entregan UN SOLO RMD — no hay un segundo documento (ni un vigente, ni un borrador, ni un Control de Cambio) contra el cual compararlo. Tu trabajo es auditar este documento por sí solo contra seis cosas concretas:
 1. Las REGLAS PERMANENTES DE HOMOLOGACIÓN que te entregan (instrucciones fijas del tipo "el término A debe reemplazarse por B").
 2. Que las citas cruzadas internas entre pasos (ej. "según lo indicado en el paso 4.2.5") apunten a un paso que existe y cuyo contenido corresponde a lo que la cita espera encontrar ahí.
 3. Que la suma de cantidades de insumos citadas en el procedimiento (sección 4) cuadre con la cantidad total declarada en la tabla de insumos (sección 2).
 4. Que ningún paso involucre un equipo marcado como RETIRADO en el maestro de equipos.
+5. Que todo equipo/instrumento/material listado en la sección 1 esté mencionado como preparado o usado en algún paso del procedimiento (sección 4).
+6. Que todo paso que exige Visto Bueno (VB) incluya la nota de verificación presencial del jefe o supervisor.
 
-NO inventes una comparación que no existe: no hay "otro documento" con el que contrastar, así que NUNCA reportes algo como "cambió respecto a..." o "el borrador decía...". Si el RMD no viola ninguna de las 4 cosas de arriba, reportalo así — no busques defectos que no están relacionados con estas 4 verificaciones.
+NO inventes una comparación que no existe: no hay "otro documento" con el que contrastar, así que NUNCA reportes algo como "cambió respecto a..." o "el borrador decía...". Si el RMD no viola ninguna de las 6 cosas de arriba, reportalo así — no busques defectos que no están relacionados con estas 6 verificaciones.
 
 ## REGLAS ABSOLUTAS (no negociables)
 
-1. **Solo reglas permanentes, citas cruzadas, cuadre de insumos y equipos retirados — nada más.** No evalúes redacción, no opines si el documento "está bien" en general, no analices el encabezado (código, versión, edición, estado, fecha de estado, autorizado por, teórico).
+1. **Solo reglas permanentes, citas cruzadas, cuadre de insumos, equipos retirados, preparación de equipos y nota de VB — nada más.** No evalúes redacción, no opines si el documento "está bien" en general, no analices el encabezado (código, versión, edición, estado, fecha de estado, autorizado por, teórico).
 
 2. **Violación de regla permanente → "tipoDiferencia": "termino_sin_homologar".** Usa "pasoIdVigente" para el paso donde aparece el texto que viola la regla ("N/A" si aplica a todo el documento y no a un paso puntual — ej. precauciones, notas importantes). "pasoIdBorrador" y "textoEnBorrador" van SIEMPRE en null (no hay borrador). "textoEnVigente" debe ser una cita fiel del texto que viola la regla. "justificacion" debe citar la regla permanente textual que se está violando.
 
@@ -594,13 +608,17 @@ NO inventes una comparación que no existe: no hay "otro documento" con el que c
 
 4. **Equipo retirado en uso → "alertaCoherencia" tipo "equipo_retirado_en_uso"**, y además marca "involucraEquipoRetirado": true en cualquier diferencia relacionada con ese paso.
 
-5. **Cero alucinación.** Si no encontrás ninguna violación de las 4 verificaciones, "diferenciasDetectadas" y "alertasCoherencia" pueden quedar vacíos — eso es un resultado válido y esperado, no un error.
+5. **Equipo/instrumento/material sin preparación registrada → "alertaCoherencia" tipo "equipo_sin_preparacion_registrada"**, severidad "alta". La sección 1 (EQUIPOS/INSTRUMENTOS/MATERIALES) lista lo que se va a usar. Verifica que CADA UNO esté mencionado en algún paso de la sección 4 del procedimiento (que según la etapa puede titularse "4.-FABRICACION", "4.-ENVASE", "4.-ACONDICIONADO" o "4.-RECUBRIMIENTO") — ya sea en la subsección de preparación de máquinas/equipos (ej. "4.2 Preparación de las máquinas o equipos") o en cualquier otro paso que indique que se está preparando o usando. Si alguno no aparece mencionado en ningún paso, repórtalo indicando en "descripcion" el código/descripción del equipo faltante.
 
-6. **"coincidenciaPorcentaje" representa CUMPLIMIENTO, no similitud.** 100 = no encontraste ninguna violación. Baja en proporción a la cantidad y severidad de violaciones reales encontradas (una regla permanente violada en varios pasos pesa más que una sola vez).
+6. **Nota de verificación presencial faltante en paso con VB → "alertaCoherencia" tipo "nota_vb_faltante"**, severidad "alta". Cuando un paso tiene la casilla de Visto Bueno ("VB") junto a "REALIZADO POR" (podés apoyarte en el campo "requiereVB" de la estructura extraída, pero confirmalo con el PDF si está disponible), ese paso debe incluir textualmente la nota "NOTA: EL JEFE O SUPERVISOR DE LA SECCION DEBE VERIFICAR PRESENCIALMENTE LA ACTIVIDAD U OPERACION REALIZADA" (o una redacción que exprese exactamente lo mismo). Si falta, repórtalo con "pasosAfectados" incluyendo el pasoId.
 
-7. **JSON estricto, nada de texto libre.** Tu respuesta completa debe ser un único objeto JSON válido que cumpla exactamente el schema proporcionado. No agregues explicaciones antes o después del JSON. No uses markdown ni bloques de código.
+7. **Cero alucinación.** Si no encontrás ninguna violación de las 6 verificaciones, "diferenciasDetectadas" y "alertasCoherencia" pueden quedar vacíos — eso es un resultado válido y esperado, no un error.
 
-8. **Idioma.** Todo el contenido textual debe estar en español, en el registro imperativo/normativo propio de un documento BPM.
+8. **"coincidenciaPorcentaje" representa CUMPLIMIENTO, no similitud.** 100 = no encontraste ninguna violación. Baja en proporción a la cantidad y severidad de violaciones reales encontradas (una regla permanente violada en varios pasos pesa más que una sola vez).
+
+9. **JSON estricto, nada de texto libre.** Tu respuesta completa debe ser un único objeto JSON válido que cumpla exactamente el schema proporcionado. No agregues explicaciones antes o después del JSON. No uses markdown ni bloques de código.
+
+10. **Idioma.** Todo el contenido textual debe estar en español, en el registro imperativo/normativo propio de un documento BPM.
 
 ## SECCIÓN Y ETAPA
 Debes identificar a qué SECCIÓN de producto (SOLIDOS, ACONDICIONADO, CAPSULAS_BLANDAS, COSMETICOS, INY_HORMONALES, MENTHOLATUM, POLVOS_EFERVESCENTES, SEMISOLIDOS, SEMISOLIDOS_HORM, SOLIDOS_HORMONALES, SOLIDOS_4) y a qué ETAPA (FABRICACION, RECUBRIMIENTO, ENVASE, ACONDICIONADO) pertenece el RMD. Si no podés determinarlo con confianza, usa "NO_IDENTIFICADA" y explicá por qué en el resumen ejecutivo.`;

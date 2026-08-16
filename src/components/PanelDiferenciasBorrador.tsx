@@ -59,6 +59,8 @@ const TIPO_ALERTA_LABEL: Record<AlertaCoherencia["tipo"], string> = {
   condicion_ambiental_contradictoria: "Condición ambiental contradictoria",
   campo_control_faltante: "Campo de control faltante",
   documento_obsoleto_referenciado: "Documento obsoleto referenciado",
+  equipo_sin_preparacion_registrada: "Equipo sin preparación registrada",
+  nota_vb_faltante: "Nota de verificación presencial (VB) faltante",
   otro: "Otro",
 };
 
