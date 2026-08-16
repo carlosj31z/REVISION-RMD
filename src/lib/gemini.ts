@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+import { SchemaType } from "@google/generative-ai";
 import type {
   RMDExtraido,
   ResultadoRevisionIA,
@@ -7,6 +7,7 @@ import type {
   HallazgoAVerificar,
   ResultadoVerificacionCorreccion,
 } from "@/types/rmd";
+import { generarJSONConFallback } from "./llmFallback";
 
 function formatearReglas(reglas: ReglaHomologacion[]): string {
   if (reglas.length === 0) return "(no hay reglas permanentes activas para esta sección/etapa)";
@@ -20,18 +21,13 @@ function formatearReglas(reglas: ReglaHomologacion[]): string {
  * discrepancias entre el RMD vigente (PDF) y el Control de Cambio / borrador
  * de producción, citando el paso exacto (ej. "4.4.23") para que la corrección
  * en SAP sea inmediata y sin ambigüedad.
+ *
+ * Generación de contenido: ver src/lib/llmFallback.ts. Todas las funciones
+ * de este archivo delegan en generarJSONConFallback, que intenta Gemini
+ * (clave principal), Gemini (clave de respaldo) y Groq (última instancia),
+ * en ese orden, para que un límite de cuota en un solo proveedor no tumbe
+ * la app.
  */
-
-function getClient() {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "Falta GEMINI_API_KEY en las variables de entorno. Configúrala en .env.local " +
-        "o en el dashboard de Vercel. Nunca la escribas en el código ni la compartas en chats."
-    );
-  }
-  return new GoogleGenerativeAI(apiKey);
-}
 
 // ---------- System Prompt ----------
 // Este prompt es deliberadamente estricto: fija el rol, prohíbe explícitamente
@@ -178,28 +174,6 @@ const responseSchema = {
   ],
 };
 
-function esErrorTransitorio(err: any): boolean {
-  const status = err?.status ?? err?.response?.status;
-  return status === 503 || status === 429;
-}
-
-async function conReintentos<T>(fn: () => Promise<T>, intentos = 5): Promise<T> {
-  for (let i = 0; i < intentos; i++) {
-    try {
-      return await fn();
-    } catch (err) {
-      const esUltimoIntento = i === intentos - 1;
-      if (esUltimoIntento || !esErrorTransitorio(err)) throw err;
-      // Backoff exponencial con tope de 10s + jitter, para absorber picos
-      // sostenidos de "alta demanda" de Gemini sin exceder el maxDuration de la ruta.
-      const esperaBase = Math.min(1000 * 2 ** i, 10000);
-      const esperaMs = esperaBase + Math.random() * 500;
-      await new Promise((resolve) => setTimeout(resolve, esperaMs));
-    }
-  }
-  throw new Error("unreachable");
-}
-
 export interface EquipoMaestro {
   codigo: string;
   descripcion: string;
@@ -218,23 +192,10 @@ export interface ComparacionInput {
 export async function compararRMDvsControlCambios(
   input: ComparacionInput
 ): Promise<ResultadoRevisionIA> {
-  const genAI = getClient();
-  const model = genAI.getGenerativeModel({
-    model: "gemini-flash-latest",
-    systemInstruction: SYSTEM_PROMPT,
-    generationConfig: {
-      responseMimeType: "application/json",
-      responseSchema: responseSchema as any,
-      temperature: 0.1, // baja temperatura: queremos detección precisa, no creatividad
-    },
-  });
-
   const equiposRetirados = input.equiposMaestro.filter((e) => !e.activo);
   const equiposActivos = input.equiposMaestro.filter((e) => e.activo);
 
-  const parts: any[] = [
-    {
-      text: `## MAESTRO DE EQUIPOS (fuente de verdad)
+  const textoContenido = `## MAESTRO DE EQUIPOS (fuente de verdad)
 
 Equipos RETIRADOS (inactivos, no deben aparecer en pasos vigentes ni nuevos):
 ${equiposRetirados.map((e) => `- ${e.codigo}: ${e.descripcion}`).join("\n") || "(ninguno registrado como retirado)"}
@@ -252,39 +213,31 @@ ${JSON.stringify(input.rmdVigente, null, 2)}
 
 ## DOCUMENTO DE ENTRADA (Control de Cambio / No Conformidad / Homologación de Términos)
 
-${input.controlDeCambioTexto ?? "(ver PDF adjunto)"}`,
-    },
-  ];
+${input.controlDeCambioTexto ?? "(ver PDF adjunto)"}`;
 
+  const pdfsAdjuntos = [];
   if (input.pdfVigenteBase64) {
-    parts.push({
-      inlineData: { mimeType: "application/pdf", data: input.pdfVigenteBase64 },
+    pdfsAdjuntos.push({
+      mimeType: "application/pdf",
+      data: input.pdfVigenteBase64,
+      etiqueta: "PDF original del RMD vigente, como respaldo visual del layout.",
     });
-    parts.push({ text: "↑ PDF original del RMD vigente, como respaldo visual del layout." });
   }
-
   if (input.pdfControlCambioBase64) {
-    parts.push({
-      inlineData: { mimeType: "application/pdf", data: input.pdfControlCambioBase64 },
+    pdfsAdjuntos.push({
+      mimeType: "application/pdf",
+      data: input.pdfControlCambioBase64,
+      etiqueta: "PDF del Control de Cambio / No Conformidad.",
     });
-    parts.push({ text: "↑ PDF del Control de Cambio / No Conformidad." });
   }
 
-  const result = await conReintentos(() =>
-    model.generateContent({ contents: [{ role: "user", parts }] })
-  );
-
-  const raw = result.response.text();
-
-  let parsed: ResultadoRevisionIA;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(
-      `Gemini devolvió una respuesta que no es JSON válido. Esto no debería ocurrir con ` +
-        `responseSchema activo; revisa el modelo o los límites de tokens. Respuesta cruda: ${raw.slice(0, 500)}`
-    );
-  }
+  const parsed: ResultadoRevisionIA = await generarJSONConFallback({
+    nombreOperacion: "compararRMDvsControlCambios",
+    systemPrompt: SYSTEM_PROMPT,
+    textoContenido,
+    pdfsAdjuntos,
+    schema: responseSchema,
+  });
 
   return validarYCompletarResultado(parsed, input.equiposMaestro);
 }
@@ -477,23 +430,10 @@ export interface ComparacionBorradorInput {
 export async function compararRMDvsBorrador(
   input: ComparacionBorradorInput
 ): Promise<ResultadoComparacionBorrador> {
-  const genAI = getClient();
-  const model = genAI.getGenerativeModel({
-    model: "gemini-flash-latest",
-    systemInstruction: SYSTEM_PROMPT_BORRADOR,
-    generationConfig: {
-      responseMimeType: "application/json",
-      responseSchema: responseSchemaBorrador as any,
-      temperature: 0.1,
-    },
-  });
-
   const equiposRetirados = input.equiposMaestro.filter((e) => !e.activo);
   const equiposActivos = input.equiposMaestro.filter((e) => e.activo);
 
-  const parts: any[] = [
-    {
-      text: `## MAESTRO DE EQUIPOS (fuente de verdad)
+  const textoContenido = `## MAESTRO DE EQUIPOS (fuente de verdad)
 
 Equipos RETIRADOS (inactivos, no deben aparecer en pasos vigentes ni nuevos):
 ${equiposRetirados.map((e) => `- ${e.codigo}: ${e.descripcion}`).join("\n") || "(ninguno registrado como retirado)"}
@@ -511,39 +451,31 @@ ${JSON.stringify(input.rmdVigente, null, 2)}
 
 ## BORRADOR DE PRODUCCIÓN (estructura extraída, sección 6 de firmas ya excluida — el encabezado NO es objeto de revisión)
 
-${JSON.stringify(input.rmdBorrador, null, 2)}`,
-    },
-  ];
+${JSON.stringify(input.rmdBorrador, null, 2)}`;
 
+  const pdfsAdjuntos = [];
   if (input.pdfVigenteBase64) {
-    parts.push({
-      inlineData: { mimeType: "application/pdf", data: input.pdfVigenteBase64 },
+    pdfsAdjuntos.push({
+      mimeType: "application/pdf",
+      data: input.pdfVigenteBase64,
+      etiqueta: "PDF original del RMD vigente, como respaldo visual del layout.",
     });
-    parts.push({ text: "↑ PDF original del RMD vigente, como respaldo visual del layout." });
   }
-
   if (input.pdfBorradorBase64) {
-    parts.push({
-      inlineData: { mimeType: "application/pdf", data: input.pdfBorradorBase64 },
+    pdfsAdjuntos.push({
+      mimeType: "application/pdf",
+      data: input.pdfBorradorBase64,
+      etiqueta: "PDF original del borrador de Producción, como respaldo visual del layout.",
     });
-    parts.push({ text: "↑ PDF original del borrador de Producción, como respaldo visual del layout." });
   }
 
-  const result = await conReintentos(() =>
-    model.generateContent({ contents: [{ role: "user", parts }] })
-  );
-
-  const raw = result.response.text();
-
-  let parsed: ResultadoComparacionBorrador;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(
-      `Gemini devolvió una respuesta que no es JSON válido. Esto no debería ocurrir con ` +
-        `responseSchema activo; revisa el modelo o los límites de tokens. Respuesta cruda: ${raw.slice(0, 500)}`
-    );
-  }
+  const parsed: ResultadoComparacionBorrador = await generarJSONConFallback({
+    nombreOperacion: "compararRMDvsBorrador",
+    systemPrompt: SYSTEM_PROMPT_BORRADOR,
+    textoContenido,
+    pdfsAdjuntos,
+    schema: responseSchemaBorrador,
+  });
 
   return validarYCompletarResultadoBorrador(parsed, input.equiposMaestro);
 }
@@ -633,23 +565,10 @@ export interface VerificacionSolaInput {
 export async function verificarCumplimientoSolo(
   input: VerificacionSolaInput
 ): Promise<ResultadoComparacionBorrador> {
-  const genAI = getClient();
-  const model = genAI.getGenerativeModel({
-    model: "gemini-flash-latest",
-    systemInstruction: SYSTEM_PROMPT_VERIFICACION_SOLA,
-    generationConfig: {
-      responseMimeType: "application/json",
-      responseSchema: responseSchemaBorrador as any,
-      temperature: 0.1,
-    },
-  });
-
   const equiposRetirados = input.equiposMaestro.filter((e) => !e.activo);
   const equiposActivos = input.equiposMaestro.filter((e) => e.activo);
 
-  const parts: any[] = [
-    {
-      text: `## MAESTRO DE EQUIPOS (fuente de verdad)
+  const textoContenido = `## MAESTRO DE EQUIPOS (fuente de verdad)
 
 Equipos RETIRADOS (inactivos, no deben aparecer en pasos vigentes ni nuevos):
 ${equiposRetirados.map((e) => `- ${e.codigo}: ${e.descripcion}`).join("\n") || "(ninguno registrado como retirado)"}
@@ -663,32 +582,24 @@ ${formatearReglas(input.reglas)}
 
 ## RMD A VERIFICAR (estructura extraída, sección 6 de firmas ya excluida — el encabezado NO es objeto de revisión)
 
-${JSON.stringify(input.rmd, null, 2)}`,
-    },
-  ];
+${JSON.stringify(input.rmd, null, 2)}`;
 
+  const pdfsAdjuntos = [];
   if (input.pdfBase64) {
-    parts.push({
-      inlineData: { mimeType: "application/pdf", data: input.pdfBase64 },
+    pdfsAdjuntos.push({
+      mimeType: "application/pdf",
+      data: input.pdfBase64,
+      etiqueta: "PDF original del RMD, como respaldo visual del layout.",
     });
-    parts.push({ text: "↑ PDF original del RMD, como respaldo visual del layout." });
   }
 
-  const result = await conReintentos(() =>
-    model.generateContent({ contents: [{ role: "user", parts }] })
-  );
-
-  const raw = result.response.text();
-
-  let parsed: ResultadoComparacionBorrador;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(
-      `Gemini devolvió una respuesta que no es JSON válido. Esto no debería ocurrir con ` +
-        `responseSchema activo; revisa el modelo o los límites de tokens. Respuesta cruda: ${raw.slice(0, 500)}`
-    );
-  }
+  const parsed: ResultadoComparacionBorrador = await generarJSONConFallback({
+    nombreOperacion: "verificarCumplimientoSolo",
+    systemPrompt: SYSTEM_PROMPT_VERIFICACION_SOLA,
+    textoContenido,
+    pdfsAdjuntos,
+    schema: responseSchemaBorrador,
+  });
 
   return validarYCompletarResultadoBorrador(parsed, input.equiposMaestro);
 }
@@ -753,52 +664,30 @@ export interface VerificacionCorreccionInput {
 export async function verificarCorreccionRMD(
   input: VerificacionCorreccionInput
 ): Promise<ResultadoVerificacionCorreccion> {
-  const genAI = getClient();
-  const model = genAI.getGenerativeModel({
-    model: "gemini-flash-latest",
-    systemInstruction: SYSTEM_PROMPT_VERIFICACION,
-    generationConfig: {
-      responseMimeType: "application/json",
-      responseSchema: responseSchemaVerificacion as any,
-      temperature: 0.1,
-    },
-  });
-
-  const parts: any[] = [
-    {
-      text: `## OBSERVACIONES A VERIFICAR (de la revisión anterior)
+  const textoContenido = `## OBSERVACIONES A VERIFICAR (de la revisión anterior)
 
 ${input.hallazgos.map((h) => `- id ${h.id} · ${h.ubicacionReferencia}: ${h.descripcion}`).join("\n")}
 
 ## RMD CORREGIDO (estructura extraída, sección 6 de firmas ya excluida)
 
-${JSON.stringify(input.rmdCorregido, null, 2)}`,
-    },
-  ];
+${JSON.stringify(input.rmdCorregido, null, 2)}`;
 
+  const pdfsAdjuntos = [];
   if (input.pdfCorregidoBase64) {
-    parts.push({
-      inlineData: { mimeType: "application/pdf", data: input.pdfCorregidoBase64 },
+    pdfsAdjuntos.push({
+      mimeType: "application/pdf",
+      data: input.pdfCorregidoBase64,
+      etiqueta: "PDF original del RMD corregido, como respaldo visual del layout.",
     });
-    parts.push({ text: "↑ PDF original del RMD corregido, como respaldo visual del layout." });
   }
 
-  const result = await conReintentos(() =>
-    model.generateContent({ contents: [{ role: "user", parts }] })
-  );
-
-  const raw = result.response.text();
-
-  let parsed: ResultadoVerificacionCorreccion;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(
-      `Gemini devolvió una respuesta que no es JSON válido al verificar la corrección. Esto no ` +
-        `debería ocurrir con responseSchema activo; revisa el modelo o los límites de tokens. ` +
-        `Respuesta cruda: ${raw.slice(0, 500)}`
-    );
-  }
+  const parsed: ResultadoVerificacionCorreccion = await generarJSONConFallback({
+    nombreOperacion: "verificarCorreccionRMD",
+    systemPrompt: SYSTEM_PROMPT_VERIFICACION,
+    textoContenido,
+    pdfsAdjuntos,
+    schema: responseSchemaVerificacion,
+  });
 
   return parsed;
 }
