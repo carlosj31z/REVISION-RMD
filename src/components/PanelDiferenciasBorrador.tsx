@@ -217,7 +217,11 @@ export function PanelDiferenciasBorrador({
                           onVerEnBorrador({
                             pasoId: d.pasoIdBorrador,
                             seccionGeneral: d.seccionGeneral,
-                            textoBuscado: d.textoEnBorrador,
+                            // En una eliminación marcada en rojo, textoEnBorrador
+                            // va en null (no es contenido propuesto), pero el
+                            // texto a retirar SÍ está impreso en el borrador:
+                            // se usa el del vigente para poder enfocarlo.
+                            textoBuscado: d.textoEnBorrador ?? d.textoEnVigente,
                           })
                       : null
                   }
