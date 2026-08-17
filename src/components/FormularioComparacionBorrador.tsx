@@ -91,7 +91,7 @@ export function FormularioComparacionBorrador({
   );
 
   return (
-    <form onSubmit={handleSubmit} className="mx-auto max-w-2xl animate-fade-in-up px-6 py-10">
+    <form onSubmit={handleSubmit} className="inset-seguro-x mx-auto max-w-2xl animate-fade-in-up px-4 py-7 sm:px-6 sm:py-10">
       <div className="mb-8">
         <p className="text-[11px] font-medium uppercase tracking-wide text-system">
           {copia.eyebrow}
@@ -136,7 +136,7 @@ export function FormularioComparacionBorrador({
           )}
         </Campo>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Campo label="Sección">
             <select
               value={seccion}

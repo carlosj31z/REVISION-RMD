@@ -112,7 +112,7 @@ export function PanelDiferenciasBorrador({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-paper">
-      <header className="material-chrome-white z-10 border-b border-line/70 px-5 py-4 shadow-soft">
+      <header className="material-chrome-white z-10 border-b border-line/70 px-4 py-3.5 shadow-soft sm:px-5 sm:py-4">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
           {verificandoCorregido
             ? "Indicaciones del borrador pendientes de aplicar"
@@ -175,7 +175,7 @@ export function PanelDiferenciasBorrador({
         )}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-24 sm:px-5 lg:pb-4">
         <ResumenEjecutivo texto={resultado.resumenEjecutivo} />
 
         <DocumentosReferenciados documentos={documentosReferenciados} />
@@ -419,13 +419,13 @@ function TarjetaDiferencia({
 
       <div
         onClick={(e) => e.stopPropagation()}
-        className="mt-3 flex items-center gap-2 border-t border-line pt-2.5"
+        className="toque mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-2.5"
       >
         <BadgeEstado estado={estado} />
         {verificacion && (
           <BadgeVerificacion resuelto={verificacion.resuelto} justificacion={verificacion.justificacion} />
         )}
-        <div className="ml-auto flex gap-1">
+        <div className="ml-auto flex shrink-0 gap-1">
           <BotonEstado
             label="Corregido en SAP"
             activo={estado === "corregido_en_sap"}
@@ -466,7 +466,7 @@ function BotonEstado({
     <button
       onClick={onClick}
       title={activo ? `Quitar marca de "${label}"` : label}
-      className={`rounded border px-2 py-1 text-[11px] font-medium transition-all duration-150 ease-spring active:scale-95 ${
+      className={`min-h-[32px] rounded border px-2.5 text-[11px] font-medium transition-all duration-150 ease-spring active:scale-95 ${
         activo
           ? "border-system bg-system text-white"
           : "border-line bg-surface text-muted hover:border-system hover:text-system"

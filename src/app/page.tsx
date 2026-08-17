@@ -111,6 +111,10 @@ export default function Home() {
 
   const [pasoResaltado, setPasoResaltado] = useState<string | null>(null);
   const [saltoPdf, setSaltoPdf] = useState<SaltoPdf | null>(null);
+  // En pantallas angostas no caben el documento y las observaciones lado a
+  // lado, así que se muestra uno u otro. Arranca en "observaciones": es la
+  // lista accionable, y el documento se abre al tocar un hallazgo.
+  const [vistaMovil, setVistaMovil] = useState<"documento" | "observaciones">("observaciones");
   // Salto pendiente dentro del modal "ver en el borrador" — no null = modal abierto.
   const [modalBorrador, setModalBorrador] = useState<SaltoPdf | null>(null);
   // Todas las revisiones abiertas. El analista puede tener varias en paralelo
@@ -466,6 +470,9 @@ export default function Home() {
     (destino: DestinoPdf) => {
       if (!sesionActiva) return;
       const vista = sesionActiva.vista;
+      // En móvil el visor está oculto detrás del conmutador: sin esto, tocar
+      // una tarjeta no produciría ningún efecto visible.
+      setVistaMovil("documento");
 
       // Preferimos un paso numérico del procedimiento (resalta la línea
       // exacta); si no hay o no se encontró, probamos con la sección
@@ -579,9 +586,9 @@ export default function Home() {
 
   if (vista.tipo === "carga") {
     contenido = (
-      <div className="flex h-screen flex-col">
-        <div className="material-chrome-white sticky top-0 z-10 flex items-center justify-between border-b border-line/70 px-5 pt-4 shadow-soft">
-          <div className="relative flex gap-1">
+      <div className="h-pantalla flex flex-col">
+        <div className="material-chrome-white inset-seguro-x sticky top-0 z-10 flex flex-col gap-1 border-b border-line/70 px-3 pt-3 shadow-soft sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:pt-4">
+          <div className="scroll-x-limpio toque relative flex gap-1">
             <TabModo
               ref={(el) => {
                 tabRefs.current.borrador = el;
@@ -613,7 +620,7 @@ export default function Home() {
               />
             )}
           </div>
-          <div className="mb-2 flex items-center gap-1">
+          <div className="scroll-x-limpio toque mb-1 flex items-center gap-1 sm:mb-2 sm:overflow-visible">
             <BotonConfig onClick={() => setVista({ tipo: "reglas" })} label="Reglas permanentes" />
             <BotonConfig
               onClick={() => setVista({ tipo: "documentosObsoletos" })}
@@ -623,7 +630,7 @@ export default function Home() {
           </div>
         </div>
         {sesionesEnProceso.length > 0 && (
-          <div className="border-b border-severidad-alta/20 bg-severidad-altaTint px-5 py-2">
+          <div className="inset-seguro-x border-b border-severidad-alta/20 bg-severidad-altaTint px-4 py-2 sm:px-5">
             <p className="text-[12px] leading-relaxed text-severidad-alta">
               Tenés {sesionesEnProceso.length}{" "}
               {sesionesEnProceso.length === 1 ? "revisión" : "revisiones"} en proceso. Se
@@ -656,19 +663,19 @@ export default function Home() {
     );
   } else if (vista.tipo === "reglas") {
     contenido = (
-      <div className="h-screen animate-fade-in-up overflow-y-auto bg-paper">
+      <div className="h-pantalla animate-fade-in-up overflow-y-auto bg-paper">
         <PanelReglas onVolver={() => setVista({ tipo: "carga" })} />
       </div>
     );
   } else if (vista.tipo === "documentosObsoletos") {
     contenido = (
-      <div className="h-screen animate-fade-in-up overflow-y-auto bg-paper">
+      <div className="h-pantalla animate-fade-in-up overflow-y-auto bg-paper">
         <PanelDocumentosObsoletos onVolver={() => setVista({ tipo: "carga" })} />
       </div>
     );
   } else if (vista.tipo === "cargando") {
     contenido = (
-      <div className="flex h-screen items-center justify-center">
+      <div className="h-pantalla flex items-center justify-center">
         <div className="animate-fade-in-up text-center">
           <div className="mx-auto mb-4 flex h-10 items-center justify-center gap-1.5">
             <span
@@ -692,7 +699,7 @@ export default function Home() {
     );
   } else if (vista.tipo === "error") {
     contenido = (
-      <div className="flex h-screen items-center justify-center px-6">
+      <div className="h-pantalla flex items-center justify-center px-6">
         <div className="max-w-md animate-scale-in rounded-xl border border-severidad-critica/30 bg-severidad-criticaTint px-5 py-4 shadow-elevated">
           <div className="flex items-start gap-3">
             <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface text-severidad-critica shadow-soft">
@@ -719,10 +726,18 @@ export default function Home() {
   } else if (sesionActiva) {
     const vr = sesionActiva.vista;
     contenido = (
-      <div className="flex h-screen animate-fade-in flex-col">
-        <div className="material-chrome-white sticky top-0 z-10 flex items-center justify-between border-b border-line/70 px-5 py-2.5 shadow-soft">
+      <div className="h-pantalla flex animate-fade-in flex-col">
+        <div className="material-chrome-white inset-seguro-x sticky top-0 z-10 flex flex-col gap-1.5 border-b border-line/70 px-3 py-2 shadow-soft sm:flex-row sm:items-center sm:justify-between sm:gap-2 sm:px-5 sm:py-2.5">
           <div className="flex min-w-0 items-center gap-2">
-            <p className="truncate text-[12px] text-muted">
+            <button
+              onClick={irAPantallaCarga}
+              title="Volver al inicio sin cerrar esta revisión: queda abierta para retomarla"
+              className="-ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted transition-all duration-150 ease-spring hover:bg-paper hover:text-ink active:scale-90 sm:hidden"
+              aria-label="Volver al inicio, dejando esta revisión abierta"
+            >
+              <IconoAtras />
+            </button>
+            <p className="min-w-0 truncate text-[12px] text-muted">
               {vr.rmd.encabezado.producto} · {vr.rmd.encabezado.codigo}
             </p>
             {sesionActiva.finalizada && (
@@ -731,7 +746,7 @@ export default function Home() {
               </span>
             )}
           </div>
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="scroll-x-limpio toque flex shrink-0 items-center gap-1 sm:overflow-visible">
             <BotonSubirCorregido
               verificando={verificandoCorreccion}
               onSeleccionar={subirRmdCorregido}
@@ -743,7 +758,7 @@ export default function Home() {
                   ? "Reabrir esta revisión"
                   : "Marcar esta revisión como terminada (se sigue pudiendo consultar)"
               }
-              className={`rounded px-2 py-1 text-[12px] font-medium transition-all duration-150 ease-spring active:scale-95 ${
+              className={`shrink-0 whitespace-nowrap rounded px-2 py-1 text-[12px] font-medium transition-all duration-150 ease-spring active:scale-95 ${
                 sesionActiva.finalizada
                   ? "text-muted hover:bg-paper hover:text-ink"
                   : "text-system hover:bg-system-tint"
@@ -754,12 +769,30 @@ export default function Home() {
             <button
               onClick={irAPantallaCarga}
               title="Volver al inicio sin cerrar esta revisión: queda abierta para retomarla"
-              className="rounded px-2 py-1 text-[12px] font-medium text-muted transition-all duration-150 ease-spring hover:bg-paper hover:text-ink active:scale-95"
+              className="hidden shrink-0 whitespace-nowrap rounded px-2 py-1 text-[12px] font-medium text-muted transition-all duration-150 ease-spring hover:bg-paper hover:text-ink active:scale-95 sm:block"
             >
               — Dejar abierta
             </button>
             <ToggleTema />
           </div>
+        </div>
+
+        {/* Conmutador documento/observaciones: sólo donde no caben lado a lado. */}
+        <div className="inset-seguro-x flex gap-1 border-b border-line/70 bg-paper px-3 py-2 lg:hidden">
+          {(["observaciones", "documento"] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setVistaMovil(v)}
+              aria-pressed={vistaMovil === v}
+              className={`min-h-[40px] flex-1 rounded-lg px-3 text-[13px] font-medium transition-all duration-200 ease-spring active:scale-[0.98] ${
+                vistaMovil === v
+                  ? "bg-system text-white shadow-soft"
+                  : "bg-surface text-muted hover:text-ink"
+              }`}
+            >
+              {v === "observaciones" ? "Observaciones" : "Documento"}
+            </button>
+          ))}
         </div>
         {errorVerificacion && (
           <div className="flex animate-fade-in-up items-center justify-between gap-3 border-b border-severidad-critica/20 bg-severidad-criticaTint px-5 py-2">
@@ -772,8 +805,14 @@ export default function Home() {
             </button>
           </div>
         )}
-        <div className="grid min-h-0 flex-1 grid-cols-2 overflow-hidden">
-          <PanelRMDVigente pdfUrl={vr.pdfUrl} salto={saltoPdf} />
+        <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-2">
+          {/* En móvil se monta uno u otro (no display:none): mantener ambos
+              vivos obligaría al visor a renderizar el PDF en un contenedor de
+              ancho 0 y saldría a una escala equivocada. */}
+          <div className={vistaMovil === "documento" ? "min-h-0" : "hidden min-h-0 lg:block"}>
+            <PanelRMDVigente pdfUrl={vr.pdfUrl} salto={saltoPdf} />
+          </div>
+          <div className={vistaMovil === "observaciones" ? "min-h-0" : "hidden min-h-0 lg:block"}>
           {vr.tipo === "resultado" ? (
             <PanelDiscrepancias
               resultado={vr.resultado}
@@ -801,6 +840,7 @@ export default function Home() {
               puedeVerBorrador={!!vr.pdfBorradorUrl}
             />
           )}
+          </div>
         </div>
         {vr.tipo === "resultado-borrador" && modalBorrador && vr.pdfBorradorUrl && (
           <ModalVisorBorrador
@@ -954,7 +994,7 @@ function BarraSesiones({
   const enProceso = sesiones.filter((s) => !s.finalizada).length;
 
   return (
-    <div className="fixed bottom-5 left-1/2 z-50 w-[min(92vw,460px)] -translate-x-1/2 animate-scale-in">
+    <div className="pb-seguro fixed bottom-3 left-1/2 z-50 w-[min(94vw,460px)] -translate-x-1/2 animate-scale-in sm:bottom-5">
       {abierta && (
         <div className="mb-2 max-h-[52vh] overflow-y-auto rounded-xl border border-line bg-surface p-2 shadow-elevated">
           {enProceso > 0 && (
@@ -983,21 +1023,22 @@ function BarraSesiones({
                 </div>
                 <button
                   onClick={() => onAbrir(s.id)}
-                  className="shrink-0 rounded-full bg-system px-2.5 py-1 text-[11.5px] font-medium text-white shadow-soft transition-all duration-150 ease-spring hover:bg-system-light active:scale-95"
+                  className="min-h-[36px] shrink-0 rounded-full bg-system px-3 text-[11.5px] font-medium text-white shadow-soft transition-all duration-150 ease-spring hover:bg-system-light active:scale-95"
                 >
                   Abrir
                 </button>
                 <button
                   onClick={() => onAlternarFinalizada(s.id)}
                   title={s.finalizada ? "Reabrir" : "Marcar como finalizada"}
-                  className="shrink-0 rounded-full px-2 py-1 text-[11.5px] font-medium text-muted transition-all duration-150 ease-spring hover:bg-system-tint hover:text-system active:scale-95"
+                  className="min-h-[36px] min-w-[36px] shrink-0 rounded-full px-2 text-[11.5px] font-medium text-muted transition-all duration-150 ease-spring hover:bg-system-tint hover:text-system active:scale-95"
                 >
                   {s.finalizada ? "Reabrir" : "✓"}
                 </button>
                 <button
                   onClick={() => onCerrar(s.id)}
                   title="Cerrar y descartar esta revisión"
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted transition-all duration-150 ease-spring hover:bg-severidad-criticaTint hover:text-severidad-critica active:scale-90"
+                  aria-label="Cerrar y descartar esta revisión"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted transition-all duration-150 ease-spring hover:bg-severidad-criticaTint hover:text-severidad-critica active:scale-90"
                 >
                   <IconoX />
                 </button>
@@ -1034,6 +1075,24 @@ function IconoPausa() {
     <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">
       <rect x="6" y="4" width="4" height="16" rx="1" />
       <rect x="14" y="4" width="4" height="16" rx="1" />
+    </svg>
+  );
+}
+
+function IconoAtras() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m15 18-6-6 6-6" />
     </svg>
   );
 }

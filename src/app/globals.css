@@ -86,6 +86,62 @@
   scrollbar-color: rgb(var(--color-scrollbar-thumb)) transparent;
 }
 
+/* Alto de pantalla utilizable. En móvil, 100vh mide la ventana CON la barra
+   de direcciones retraída, así que un layout de 100vh con cabecera fija
+   arriba y barra fija abajo queda recortado hasta que el usuario hace
+   scroll. 100dvh sigue el alto que realmente se ve. Se deja 100vh como
+   respaldo para navegadores sin soporte de unidades dinámicas. */
+.h-pantalla {
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* Márgenes de seguridad del sistema (notch, barra gestual). Sin esto, con
+   viewport-fit=cover la barra inferior de sesiones queda debajo del gesto
+   de inicio y se vuelve intocable. */
+.pb-seguro {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.inset-seguro-x {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* Barra de pestañas deslizable en pantallas angostas, sin barra visible:
+   las tres pestañas no entran en 375 px y truncarlas escondería opciones. */
+.scroll-x-limpio {
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scroll-x-limpio::-webkit-scrollbar {
+  display: none;
+}
+
+/* En pantallas táctiles los controles compactos (11-12 px, padding mínimo)
+   quedan por debajo del mínimo tocable cómodo. Se agrandan sólo donde el
+   puntero es grueso: en escritorio conservan su densidad original. */
+@media (pointer: coarse) {
+  .toque button,
+  button.toque,
+  .toque [role="button"] {
+    min-height: 40px;
+  }
+
+  /* iOS hace zoom automático al enfocar un control con fuente menor a 16px
+     y NO vuelve al nivel anterior al desenfocar: el usuario queda con la
+     interfaz ampliada. Se sube sólo en táctil; en escritorio los controles
+     conservan su tamaño compacto original.
+     El !important es necesario: los controles llevan utilidades de Tailwind
+     (text-[13px]), y un selector de elemento pierde por especificidad contra
+     una clase. */
+  select,
+  textarea,
+  input:not([type="file"]):not([type="checkbox"]):not([type="radio"]) {
+    font-size: 16px !important;
+  }
+}
+
 ::selection {
   background-color: rgb(var(--color-system));
   color: rgb(var(--color-paper));

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
@@ -37,6 +37,20 @@ export const metadata: Metadata = {
   title: "Revisión de RMD — Control de Cambio",
   description:
     "Detección de discrepancias entre Registros de Manufactura Digital y Controles de Cambio.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  // La app ocupa toda la pantalla y ancla barras arriba y abajo: sin
+  // viewport-fit=cover, en teléfonos con notch//barra gestual el sistema
+  // reserva franjas y las barras quedan flotando. Con cover, el layout
+  // llega al borde y cada barra compensa con env(safe-area-inset-*).
+  viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "rgb(247 247 245)" },
+    { media: "(prefers-color-scheme: dark)", color: "rgb(20 21 19)" },
+  ],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

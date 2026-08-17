@@ -23,25 +23,27 @@ export function ModalVisorBorrador({ pdfUrl, salto, onClose }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center bg-ink/40 p-6 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center bg-ink/40 backdrop-blur-sm sm:p-6"
       onClick={onClose}
     >
+      {/* A pantalla completa en móvil: recortarlo con márgenes dejaría el PDF
+          en un ancho donde no se puede leer nada. */}
       <div
         onClick={(e) => e.stopPropagation()}
-        className="flex h-[88vh] w-full max-w-4xl animate-scale-in flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-elevated"
+        className="pb-seguro flex h-full w-full animate-scale-in flex-col overflow-hidden border-line bg-surface shadow-elevated sm:h-[88vh] sm:max-w-4xl sm:rounded-xl sm:border"
       >
-        <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
-          <div>
+        <div className="inset-seguro-x flex shrink-0 items-center justify-between gap-2 border-b border-line px-4 py-3">
+          <div className="min-w-0">
             <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
               Vista del borrador de Producción
             </p>
-            <p className="text-[13px] font-semibold text-ink">
+            <p className="truncate text-[13px] font-semibold text-ink">
               {salto.pasoId ? `Paso ${salto.pasoId}` : `Página ${salto.pagina}`}
             </p>
           </div>
           <button
             onClick={onClose}
-            className="rounded px-2 py-1 text-[12px] font-medium text-muted transition-all duration-150 ease-spring hover:bg-paper hover:text-ink active:scale-95"
+            className="min-h-[40px] shrink-0 rounded px-3 text-[12px] font-medium text-muted transition-all duration-150 ease-spring hover:bg-paper hover:text-ink active:scale-95"
           >
             ✕ Cerrar
           </button>
