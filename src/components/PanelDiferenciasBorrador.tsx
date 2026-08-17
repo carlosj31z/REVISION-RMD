@@ -135,9 +135,8 @@ export function PanelDiferenciasBorrador({
           <span className="text-[12px] text-muted">
             {verificandoCorregido ? (
               <>
-                {diferenciasReales.length} indicación
-                {diferenciasReales.length !== 1 ? "es" : ""} pendiente
-                {diferenciasReales.length !== 1 ? "s" : ""}
+                {diferenciasReales.length}{" "}
+                {diferenciasReales.length === 1 ? "indicación pendiente" : "indicaciones pendientes"}
               </>
             ) : (
               <>

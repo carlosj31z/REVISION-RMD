@@ -21,12 +21,7 @@ import type {
 type EstadoSeguimiento = "pendiente" | "corregido_en_sap" | "descartado";
 type ModoEntrada = "control_cambios" | "borrador" | "corregido_vs_borrador";
 
-type VistaActual =
-  | { tipo: "carga" }
-  | { tipo: "reglas" }
-  | { tipo: "documentosObsoletos" }
-  | { tipo: "cargando"; mensaje: string }
-  | { tipo: "error"; mensaje: string }
+type VistaResultado =
   | {
       tipo: "resultado";
       rmd: RMDExtraido;
@@ -55,7 +50,42 @@ type VistaActual =
       rmdBorrador?: RMDExtraido;
     };
 
-type VistaResultado = Extract<VistaActual, { tipo: "resultado" | "resultado-borrador" }>;
+/**
+ * Una revisión abierta. El analista puede tener varias a la vez y alternar
+ * entre ellas sin perder el avance de ninguna: por eso el checklist manual
+ * (estadosSeguimiento) y la verificación automática viven DENTRO de la
+ * sesión y no en un estado global compartido.
+ *
+ * Ojo: los PDF se guardan como blob URL, que solo existe mientras viva la
+ * pestaña. Por eso las sesiones no se pueden persistir en localStorage ni
+ * sobrevivir a un recargado — de ahí la advertencia al usuario.
+ */
+interface SesionRevision {
+  id: string;
+  vista: VistaResultado;
+  estadosSeguimiento: Record<string, EstadoSeguimiento>;
+  verificacionCorreccion: Record<string, { resuelto: boolean; justificacion: string }>;
+  // El analista la marca cuando considera cerrada la revisión. Las
+  // finalizadas siguen consultables, pero ya no cuentan como "en proceso".
+  finalizada: boolean;
+  creadaEn: number;
+}
+
+type VistaActual =
+  | { tipo: "carga" }
+  | { tipo: "reglas" }
+  | { tipo: "documentosObsoletos" }
+  | { tipo: "cargando"; mensaje: string }
+  | { tipo: "error"; mensaje: string }
+  // Muestra la sesión activa (ver sesionActivaId).
+  | { tipo: "sesion" };
+
+function liberarPdfs(v: VistaResultado) {
+  URL.revokeObjectURL(v.pdfUrl);
+  if (v.tipo === "resultado-borrador" && v.pdfBorradorUrl) {
+    URL.revokeObjectURL(v.pdfBorradorUrl);
+  }
+}
 
 async function fileToBase64(file: File): Promise<string> {
   const buffer = await file.arrayBuffer();
@@ -83,24 +113,62 @@ export default function Home() {
   const [saltoPdf, setSaltoPdf] = useState<SaltoPdf | null>(null);
   // Salto pendiente dentro del modal "ver en el borrador" — no null = modal abierto.
   const [modalBorrador, setModalBorrador] = useState<SaltoPdf | null>(null);
-  const [estadosSeguimiento, setEstadosSeguimiento] = useState<Record<string, EstadoSeguimiento>>(
-    {}
-  );
-  // Revisión "en pausa": el usuario la minimizó para ir a revisar otro
-  // apartado (reglas, documentos obsoletos, cargar otro documento) sin
-  // perder el análisis actual. saltoPdf/pasoResaltado/estadosSeguimiento no
-  // se tocan al minimizar, así que al restaurar todo queda exactamente
-  // donde se dejó.
-  const [revisionMinimizada, setRevisionMinimizada] = useState<VistaResultado | null>(null);
+  // Todas las revisiones abiertas. El analista puede tener varias en paralelo
+  // y volver a cualquiera cuando quiera; cada una guarda su propio avance.
+  const [sesiones, setSesiones] = useState<SesionRevision[]>([]);
+  const [sesionActivaId, setSesionActivaId] = useState<string | null>(null);
+  const [listaSesionesAbierta, setListaSesionesAbierta] = useState(false);
 
   // Verificación automática al subir el RMD ya corregido en SAP: por cada
   // observación original (misma clave que estadosSeguimiento) guarda si la
   // IA confirmó que el documento corregido ya la resuelve.
   const [verificandoCorreccion, setVerificandoCorreccion] = useState(false);
   const [errorVerificacion, setErrorVerificacion] = useState<string | null>(null);
-  const [verificacionCorreccion, setVerificacionCorreccion] = useState<
-    Record<string, { resuelto: boolean; justificacion: string }>
-  >({});
+
+  const sesionActiva = sesiones.find((s) => s.id === sesionActivaId) ?? null;
+  const sesionesEnProceso = sesiones.filter((s) => !s.finalizada);
+
+  // Los PDF viven como blob URL, que muere con la pestaña: no hay forma de
+  // restaurar una revisión tras recargar. Avisamos antes de perder trabajo.
+  useEffect(() => {
+    if (sesionesEnProceso.length === 0) return;
+    const alSalir = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", alSalir);
+    return () => window.removeEventListener("beforeunload", alSalir);
+  }, [sesionesEnProceso.length]);
+
+  const actualizarSesion = useCallback(
+    (id: string, cambio: (s: SesionRevision) => SesionRevision) => {
+      setSesiones((prev) => prev.map((s) => (s.id === id ? cambio(s) : s)));
+    },
+    []
+  );
+
+  const abrirNuevaSesion = useCallback((vistaResultado: VistaResultado) => {
+    const id =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `sesion-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setSesiones((prev) => [
+      ...prev,
+      {
+        id,
+        vista: vistaResultado,
+        estadosSeguimiento: {},
+        verificacionCorreccion: {},
+        finalizada: false,
+        creadaEn: Date.now(),
+      },
+    ]);
+    setSesionActivaId(id);
+    setSaltoPdf(null);
+    setModalBorrador(null);
+    setErrorVerificacion(null);
+    setVista({ tipo: "sesion" });
+  }, []);
 
   const iniciarRevision = useCallback(
     async (input: {
@@ -110,8 +178,6 @@ export default function Home() {
       controlCambioTexto?: string;
       controlCambioFile?: File;
     }) => {
-      setEstadosSeguimiento({});
-      setVerificacionCorreccion({});
       setErrorVerificacion(null);
       try {
         setVista({ tipo: "cargando", mensaje: "Extrayendo el RMD vigente…" });
@@ -152,8 +218,7 @@ export default function Home() {
 
         const data = await revisionRes.json();
 
-        setSaltoPdf(null);
-        setVista({
+        abrirNuevaSesion({
           tipo: "resultado",
           rmd: estructura,
           pdfUrl: URL.createObjectURL(input.rmdFile),
@@ -164,7 +229,7 @@ export default function Home() {
         setVista({ tipo: "error", mensaje: err.message ?? "Ocurrió un error inesperado." });
       }
     },
-    []
+    [abrirNuevaSesion]
   );
 
   const iniciarComparacionBorrador = useCallback(
@@ -182,8 +247,6 @@ export default function Home() {
     }) => {
       const etiquetaPrimerDocumento =
         input.variante === "corregido" ? "el RMD corregido" : "el RMD vigente";
-      setEstadosSeguimiento({});
-      setVerificacionCorreccion({});
       setErrorVerificacion(null);
       try {
         setVista({ tipo: "cargando", mensaje: `Extrayendo ${etiquetaPrimerDocumento}…` });
@@ -252,9 +315,7 @@ export default function Home() {
 
         const data = await revisionRes.json();
 
-        setSaltoPdf(null);
-        setModalBorrador(null);
-        setVista({
+        abrirNuevaSesion({
           tipo: "resultado-borrador",
           rmd: estructuraVigente,
           pdfUrl: URL.createObjectURL(input.rmdVigenteFile),
@@ -271,15 +332,19 @@ export default function Home() {
         setVista({ tipo: "error", mensaje: err.message ?? "Ocurrió un error inesperado." });
       }
     },
-    []
+    [abrirNuevaSesion]
   );
 
   const cambiarEstadoSeguimiento = useCallback(
     async (pasoId: string, estado: EstadoSeguimiento) => {
-      setEstadosSeguimiento((prev) => ({ ...prev, [pasoId]: estado }));
+      const sesion = sesionActiva;
+      if (!sesion) return;
+      actualizarSesion(sesion.id, (s) => ({
+        ...s,
+        estadosSeguimiento: { ...s.estadosSeguimiento, [pasoId]: estado },
+      }));
 
-      const revisionId =
-        (vista.tipo === "resultado" || vista.tipo === "resultado-borrador") && vista.revisionId;
+      const revisionId = sesion.vista.revisionId;
       if (revisionId) {
         try {
           await fetch(`/api/revision/${revisionId}/decisiones`, {
@@ -293,13 +358,14 @@ export default function Home() {
         }
       }
     },
-    [vista]
+    [sesionActiva, actualizarSesion]
   );
 
   const subirRmdCorregido = useCallback(
     async (file: File) => {
-      if (vista.tipo !== "resultado" && vista.tipo !== "resultado-borrador") return;
-      const vistaActual = vista;
+      const sesion = sesionActiva;
+      if (!sesion) return;
+      const vistaActual = sesion.vista;
 
       setVerificandoCorreccion(true);
       setErrorVerificacion(null);
@@ -377,22 +443,29 @@ export default function Home() {
           if (v.resuelto) cambiarEstadoSeguimiento(clave, "corregido_en_sap");
         }
 
-        setVerificacionCorreccion((prev) => ({ ...prev, ...nuevaVerificacion }));
         setSaltoPdf(null);
+        // Solo se reemplaza el PDF principal: el del borrador (si lo hay)
+        // sigue siendo válido y su blob no debe liberarse acá.
         URL.revokeObjectURL(vistaActual.pdfUrl);
-        setVista({ ...vistaActual, rmd: estructura, pdfUrl: URL.createObjectURL(file) });
+        const pdfUrl = URL.createObjectURL(file);
+        actualizarSesion(sesion.id, (s) => ({
+          ...s,
+          vista: { ...s.vista, rmd: estructura, pdfUrl },
+          verificacionCorreccion: { ...s.verificacionCorreccion, ...nuevaVerificacion },
+        }));
       } catch (err: any) {
         setErrorVerificacion(err.message ?? "Ocurrió un error inesperado al verificar la corrección.");
       } finally {
         setVerificandoCorreccion(false);
       }
     },
-    [vista, cambiarEstadoSeguimiento]
+    [sesionActiva, cambiarEstadoSeguimiento, actualizarSesion]
   );
 
   const irAPasoEnPdf = useCallback(
     (destino: DestinoPdf) => {
-      if (vista.tipo !== "resultado" && vista.tipo !== "resultado-borrador") return;
+      if (!sesionActiva) return;
+      const vista = sesionActiva.vista;
 
       // Preferimos un paso numérico del procedimiento (resalta la línea
       // exacta); si no hay o no se encontró, probamos con la sección
@@ -420,7 +493,7 @@ export default function Home() {
         }
       }
     },
-    [vista]
+    [sesionActiva]
   );
 
   // Igual que irAPasoEnPdf, pero resuelve la ubicación contra la estructura
@@ -429,7 +502,8 @@ export default function Home() {
   // borrador real (conBorrador) y su PDF sigue en memoria.
   const verEnBorrador = useCallback(
     (destino: DestinoPdf) => {
-      if (vista.tipo !== "resultado-borrador" || !vista.rmdBorrador || !vista.pdfBorradorUrl) return;
+      const vista = sesionActiva?.vista;
+      if (vista?.tipo !== "resultado-borrador" || !vista.rmdBorrador || !vista.pdfBorradorUrl) return;
       const rmdBorrador = vista.rmdBorrador;
 
       if (destino.pasoId && destino.pasoId !== "N/A") {
@@ -454,52 +528,52 @@ export default function Home() {
         }
       }
     },
-    [vista]
+    [sesionActiva]
   );
 
-  const volverACarga = useCallback(() => {
-    setVista((prev) => {
-      if (prev.tipo === "resultado" || prev.tipo === "resultado-borrador") {
-        URL.revokeObjectURL(prev.pdfUrl);
-        if (prev.tipo === "resultado-borrador" && prev.pdfBorradorUrl) {
-          URL.revokeObjectURL(prev.pdfBorradorUrl);
-        }
-      }
-      return { tipo: "carga" };
-    });
+  /** Deja la sesión abierta (con todo su avance) y vuelve a la pantalla de carga. */
+  const irAPantallaCarga = useCallback(() => {
+    setSesionActivaId(null);
     setSaltoPdf(null);
     setModalBorrador(null);
-    setVerificacionCorreccion({});
     setErrorVerificacion(null);
+    setVista({ tipo: "carga" });
   }, []);
 
-  const minimizarRevision = useCallback(() => {
-    setVista((prev) => {
-      if (prev.tipo !== "resultado" && prev.tipo !== "resultado-borrador") return prev;
-      setRevisionMinimizada(prev);
-      return { tipo: "carga" };
-    });
+  const abrirSesion = useCallback((id: string) => {
+    setSesionActivaId(id);
+    setSaltoPdf(null);
     setModalBorrador(null);
+    setErrorVerificacion(null);
+    setListaSesionesAbierta(false);
+    setVista({ tipo: "sesion" });
   }, []);
 
-  const restaurarRevision = useCallback(() => {
-    setRevisionMinimizada((prev) => {
-      if (prev) setVista(prev);
-      return null;
-    });
-  }, []);
+  /** Marcar como terminada: sigue consultable, pero ya no cuenta como "en proceso". */
+  const alternarFinalizada = useCallback(
+    (id: string) => {
+      actualizarSesion(id, (s) => ({ ...s, finalizada: !s.finalizada }));
+    },
+    [actualizarSesion]
+  );
 
-  const descartarRevisionMinimizada = useCallback(() => {
-    setRevisionMinimizada((prev) => {
-      if (prev) {
-        URL.revokeObjectURL(prev.pdfUrl);
-        if (prev.tipo === "resultado-borrador" && prev.pdfBorradorUrl) {
-          URL.revokeObjectURL(prev.pdfBorradorUrl);
-        }
-      }
-      return null;
-    });
-  }, []);
+  const cerrarSesion = useCallback(
+    (id: string) => {
+      setSesiones((prev) => {
+        const s = prev.find((x) => x.id === id);
+        if (s) liberarPdfs(s.vista);
+        return prev.filter((x) => x.id !== id);
+      });
+      setSesionActivaId((actual) => {
+        if (actual !== id) return actual;
+        setVista({ tipo: "carga" });
+        setSaltoPdf(null);
+        setModalBorrador(null);
+        return null;
+      });
+    },
+    []
+  );
 
   let contenido: React.ReactNode;
 
@@ -548,6 +622,17 @@ export default function Home() {
             <ToggleTema />
           </div>
         </div>
+        {sesionesEnProceso.length > 0 && (
+          <div className="border-b border-severidad-alta/20 bg-severidad-altaTint px-5 py-2">
+            <p className="text-[12px] leading-relaxed text-severidad-alta">
+              Tenés {sesionesEnProceso.length}{" "}
+              {sesionesEnProceso.length === 1 ? "revisión" : "revisiones"} en proceso. Se
+              mantienen abiertas mientras no cierres ni recargues esta pestaña —{" "}
+              <strong className="font-semibold">al recargar se pierden</strong>, porque los PDF
+              solo viven en la sesión del navegador.
+            </p>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto">
           {modo === "control_cambios" ? (
             <FormularioCarga onIniciarRevision={iniciarRevision} cargando={false} />
@@ -631,30 +716,47 @@ export default function Home() {
         </div>
       </div>
     );
-  } else {
+  } else if (sesionActiva) {
+    const vr = sesionActiva.vista;
     contenido = (
       <div className="flex h-screen animate-fade-in flex-col">
         <div className="material-chrome-white sticky top-0 z-10 flex items-center justify-between border-b border-line/70 px-5 py-2.5 shadow-soft">
-          <p className="text-[12px] text-muted">
-            {vista.rmd.encabezado.producto} · {vista.rmd.encabezado.codigo}
-          </p>
-          <div className="flex items-center gap-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <p className="truncate text-[12px] text-muted">
+              {vr.rmd.encabezado.producto} · {vr.rmd.encabezado.codigo}
+            </p>
+            {sesionActiva.finalizada && (
+              <span className="shrink-0 rounded-full bg-system-tint px-2 py-0.5 text-[11px] font-medium text-system">
+                Finalizada
+              </span>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
             <BotonSubirCorregido
               verificando={verificandoCorreccion}
               onSeleccionar={subirRmdCorregido}
             />
             <button
-              onClick={minimizarRevision}
-              title="Minimizar y revisar otro apartado sin perder este análisis"
-              className="rounded px-2 py-1 text-[12px] font-medium text-muted transition-all duration-150 ease-spring hover:bg-paper hover:text-ink active:scale-95"
+              onClick={() => alternarFinalizada(sesionActiva.id)}
+              title={
+                sesionActiva.finalizada
+                  ? "Reabrir esta revisión"
+                  : "Marcar esta revisión como terminada (se sigue pudiendo consultar)"
+              }
+              className={`rounded px-2 py-1 text-[12px] font-medium transition-all duration-150 ease-spring active:scale-95 ${
+                sesionActiva.finalizada
+                  ? "text-muted hover:bg-paper hover:text-ink"
+                  : "text-system hover:bg-system-tint"
+              }`}
             >
-              — Minimizar
+              {sesionActiva.finalizada ? "Reabrir" : "✓ Finalizar"}
             </button>
             <button
-              onClick={volverACarga}
-              className="rounded px-2 py-1 text-[12px] font-medium text-system transition-all duration-150 ease-spring hover:bg-system-tint active:scale-95"
+              onClick={irAPantallaCarga}
+              title="Volver al inicio sin cerrar esta revisión: queda abierta para retomarla"
+              className="rounded px-2 py-1 text-[12px] font-medium text-muted transition-all duration-150 ease-spring hover:bg-paper hover:text-ink active:scale-95"
             >
-              Nueva revisión
+              — Dejar abierta
             </button>
             <ToggleTema />
           </div>
@@ -671,57 +773,60 @@ export default function Home() {
           </div>
         )}
         <div className="grid min-h-0 flex-1 grid-cols-2 overflow-hidden">
-          <PanelRMDVigente pdfUrl={vista.pdfUrl} salto={saltoPdf} />
-          {vista.tipo === "resultado" ? (
+          <PanelRMDVigente pdfUrl={vr.pdfUrl} salto={saltoPdf} />
+          {vr.tipo === "resultado" ? (
             <PanelDiscrepancias
-              resultado={vista.resultado}
-              documentosReferenciados={vista.rmd.documentosReferenciados}
+              resultado={vr.resultado}
+              documentosReferenciados={vr.rmd.documentosReferenciados}
               pasoResaltado={pasoResaltado}
               onHoverPaso={setPasoResaltado}
               onIrAPaso={irAPasoEnPdf}
-              estadosSeguimiento={estadosSeguimiento}
+              estadosSeguimiento={sesionActiva.estadosSeguimiento}
               onCambiarEstado={cambiarEstadoSeguimiento}
-              verificacionCorreccion={verificacionCorreccion}
+              verificacionCorreccion={sesionActiva.verificacionCorreccion}
             />
           ) : (
             <PanelDiferenciasBorrador
-              resultado={vista.resultado}
-              documentosReferenciados={vista.rmd.documentosReferenciados}
+              resultado={vr.resultado}
+              documentosReferenciados={vr.rmd.documentosReferenciados}
               pasoResaltado={pasoResaltado}
               onHoverPaso={setPasoResaltado}
               onIrAPaso={irAPasoEnPdf}
-              estadosSeguimiento={estadosSeguimiento}
+              estadosSeguimiento={sesionActiva.estadosSeguimiento}
               onCambiarEstado={cambiarEstadoSeguimiento}
-              verificacionCorreccion={verificacionCorreccion}
-              conBorrador={vista.conBorrador}
-              esCorregido={vista.esCorregido}
+              verificacionCorreccion={sesionActiva.verificacionCorreccion}
+              conBorrador={vr.conBorrador}
+              esCorregido={vr.esCorregido}
               onVerEnBorrador={verEnBorrador}
-              puedeVerBorrador={!!vista.pdfBorradorUrl}
+              puedeVerBorrador={!!vr.pdfBorradorUrl}
             />
           )}
         </div>
-        {vista.tipo === "resultado-borrador" && modalBorrador && vista.pdfBorradorUrl && (
+        {vr.tipo === "resultado-borrador" && modalBorrador && vr.pdfBorradorUrl && (
           <ModalVisorBorrador
-            pdfUrl={vista.pdfBorradorUrl}
+            pdfUrl={vr.pdfBorradorUrl}
             salto={modalBorrador}
             onClose={() => setModalBorrador(null)}
           />
         )}
       </div>
     );
+  } else {
+    // vista.tipo === "sesion" pero la sesión ya no existe (se cerró).
+    contenido = null;
   }
-
-  const mostrarPillMinimizada =
-    revisionMinimizada && vista.tipo !== "resultado" && vista.tipo !== "resultado-borrador";
 
   return (
     <>
       {contenido}
-      {mostrarPillMinimizada && (
-        <BarraRevisionMinimizada
-          nombreProducto={revisionMinimizada!.rmd.encabezado.producto}
-          onRestaurar={restaurarRevision}
-          onDescartar={descartarRevisionMinimizada}
+      {vista.tipo !== "sesion" && sesiones.length > 0 && (
+        <BarraSesiones
+          sesiones={sesiones}
+          abierta={listaSesionesAbierta}
+          onAlternarLista={() => setListaSesionesAbierta((v) => !v)}
+          onAbrir={abrirSesion}
+          onAlternarFinalizada={alternarFinalizada}
+          onCerrar={cerrarSesion}
         />
       )}
     </>
@@ -826,40 +931,99 @@ function IconoAlerta() {
  * documentos obsoletos) mientras haya una revisión minimizada, para que el
  * usuario pueda ir a revisar otro apartado sin perder el análisis en curso.
  */
-function BarraRevisionMinimizada({
-  nombreProducto,
-  onRestaurar,
-  onDescartar,
+/**
+ * Barra flotante con TODAS las revisiones abiertas. El analista puede tener
+ * varias en paralelo, volver a cualquiera, y marcarlas como finalizadas
+ * cuando lo decida.
+ */
+function BarraSesiones({
+  sesiones,
+  abierta,
+  onAlternarLista,
+  onAbrir,
+  onAlternarFinalizada,
+  onCerrar,
 }: {
-  nombreProducto: string;
-  onRestaurar: () => void;
-  onDescartar: () => void;
+  sesiones: SesionRevision[];
+  abierta: boolean;
+  onAlternarLista: () => void;
+  onAbrir: (id: string) => void;
+  onAlternarFinalizada: (id: string) => void;
+  onCerrar: (id: string) => void;
 }) {
+  const enProceso = sesiones.filter((s) => !s.finalizada).length;
+
   return (
-    <div className="fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 animate-scale-in items-center gap-3 rounded-full border border-line bg-surface py-2 pl-4 pr-2 shadow-elevated">
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-system-tint text-system">
-        <IconoPausa />
-      </span>
-      <div className="leading-tight">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
-          Revisión en pausa
-        </p>
-        <p className="max-w-[220px] truncate text-[12.5px] font-medium text-ink">
-          {nombreProducto}
-        </p>
-      </div>
+    <div className="fixed bottom-5 left-1/2 z-50 w-[min(92vw,460px)] -translate-x-1/2 animate-scale-in">
+      {abierta && (
+        <div className="mb-2 max-h-[52vh] overflow-y-auto rounded-xl border border-line bg-surface p-2 shadow-elevated">
+          {enProceso > 0 && (
+            <p className="mb-2 rounded-lg border border-severidad-alta/25 bg-severidad-altaTint px-3 py-2 text-[11.5px] leading-relaxed text-severidad-alta">
+              ⚠ No recargues ni cierres la pestaña: las revisiones viven solo en esta
+              sesión del navegador y se perderían las {enProceso} que están en proceso.
+            </p>
+          )}
+          <ul className="space-y-1">
+            {sesiones.map((s) => (
+              <li
+                key={s.id}
+                className="flex items-center gap-2 rounded-lg border border-line bg-paper px-2.5 py-2"
+              >
+                <div className="min-w-0 flex-1 leading-tight">
+                  <p className="truncate text-[12.5px] font-medium text-ink">
+                    {s.vista.rmd.encabezado.producto}
+                  </p>
+                  <p className="truncate font-mono text-[11px] text-muted">
+                    {s.vista.rmd.encabezado.codigo}
+                    {" · "}
+                    <span className={s.finalizada ? "text-system" : "text-severidad-alta"}>
+                      {s.finalizada ? "Finalizada" : "En proceso"}
+                    </span>
+                  </p>
+                </div>
+                <button
+                  onClick={() => onAbrir(s.id)}
+                  className="shrink-0 rounded-full bg-system px-2.5 py-1 text-[11.5px] font-medium text-white shadow-soft transition-all duration-150 ease-spring hover:bg-system-light active:scale-95"
+                >
+                  Abrir
+                </button>
+                <button
+                  onClick={() => onAlternarFinalizada(s.id)}
+                  title={s.finalizada ? "Reabrir" : "Marcar como finalizada"}
+                  className="shrink-0 rounded-full px-2 py-1 text-[11.5px] font-medium text-muted transition-all duration-150 ease-spring hover:bg-system-tint hover:text-system active:scale-95"
+                >
+                  {s.finalizada ? "Reabrir" : "✓"}
+                </button>
+                <button
+                  onClick={() => onCerrar(s.id)}
+                  title="Cerrar y descartar esta revisión"
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted transition-all duration-150 ease-spring hover:bg-severidad-criticaTint hover:text-severidad-critica active:scale-90"
+                >
+                  <IconoX />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <button
-        onClick={onRestaurar}
-        className="rounded-full bg-system px-3 py-1.5 text-[12px] font-medium text-white shadow-soft transition-all duration-150 ease-spring hover:bg-system-light active:scale-95"
+        onClick={onAlternarLista}
+        className="flex w-full items-center gap-3 rounded-full border border-line bg-surface py-2 pl-4 pr-4 shadow-elevated transition-all duration-150 ease-spring hover:shadow-soft active:scale-[0.99]"
       >
-        Restaurar
-      </button>
-      <button
-        onClick={onDescartar}
-        title="Descartar esta revisión"
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted transition-all duration-150 ease-spring hover:bg-severidad-criticaTint hover:text-severidad-critica active:scale-90"
-      >
-        <IconoX />
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-system-tint text-system">
+          <IconoPausa />
+        </span>
+        <span className="min-w-0 flex-1 text-left leading-tight">
+          <span className="block text-[11px] font-medium uppercase tracking-wide text-muted">
+            Revisiones abiertas
+          </span>
+          <span className="block truncate text-[12.5px] font-medium text-ink">
+            {sesiones.length} en total
+            {enProceso > 0 ? ` · ${enProceso} en proceso` : " · todas finalizadas"}
+          </span>
+        </span>
+        <span className="shrink-0 text-[12px] text-muted">{abierta ? "▾" : "▴"}</span>
       </button>
     </div>
   );
