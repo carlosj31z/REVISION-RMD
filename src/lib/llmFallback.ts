@@ -29,7 +29,15 @@ const GROQ_MODEL = process.env.GROQ_MODEL ?? "openai/gpt-oss-120b";
 
 function esErrorTransitorio(err: any): boolean {
   const status = err?.status ?? err?.response?.status;
-  return status === 503 || status === 429;
+  if (status !== 503 && status !== 429) return false;
+  // Cuota DIARIA agotada (ej. "GenerateRequestsPerDayPerProjectPerModel"):
+  // no se va a liberar en los pocos segundos que dura el backoff, así que
+  // reintentar con la MISMA clave sólo quema tiempo antes de pasar a la
+  // siguiente. Un 429 de límite por minuto, en cambio, sí conviene
+  // reintentarlo un momento antes de saltar de clave.
+  const msg = String(err?.message ?? "");
+  if (status === 429 && /PerDay/i.test(msg)) return false;
+  return true;
 }
 
 async function conReintentos<T>(fn: () => Promise<T>, intentos = 5): Promise<T> {
@@ -196,26 +204,39 @@ No tenés acceso visual a los PDF adjuntos — solo al texto ya extraído en la 
  * cada proveedor configurado en orden hasta que uno responda; si todos
  * fallan, lanza un error agregado con el detalle de cada intento.
  */
+// Claves de Gemini en orden de intento. GEMINI_API_KEY es la principal;
+// las demás son respaldo ante cuota agotada (cada API key de Google AI
+// Studio tiene su propio tope diario en el nivel gratuito, así que varias
+// claves multiplican el tope real, no solo dan tolerancia a fallas).
+// GEMINI_API_KEY_BACKUP_3 en adelante también funcionan si algún día hace
+// falta una quinta clave: no hay que tocar código, sólo agregar la variable.
+const VARIABLES_CLAVES_GEMINI = [
+  "GEMINI_API_KEY",
+  "GEMINI_API_KEY_BACKUP",
+  "GEMINI_API_KEY_BACKUP_2",
+  "GEMINI_API_KEY_BACKUP_3",
+] as const;
+
+function clavesGeminiConfiguradas(): { etiqueta: string; clave: string }[] {
+  const extra = Object.keys(process.env)
+    .filter((k) => /^GEMINI_API_KEY_BACKUP_\d+$/.test(k) && !VARIABLES_CLAVES_GEMINI.includes(k as any))
+    .sort();
+  return [...VARIABLES_CLAVES_GEMINI, ...extra]
+    .map((variable) => ({ etiqueta: variable, clave: process.env[variable] ?? "" }))
+    .filter((c) => c.clave);
+}
+
 export async function generarJSONConFallback(args: GenerarJSONArgs): Promise<any> {
   const errores: string[] = [];
 
-  const claveGeminiPrincipal = process.env.GEMINI_API_KEY;
-  const claveGeminiRespaldo = process.env.GEMINI_API_KEY_BACKUP;
+  const clavesGemini = clavesGeminiConfiguradas();
   const claveGroq = process.env.GROQ_API_KEY;
 
-  if (claveGeminiPrincipal) {
+  for (const { etiqueta, clave } of clavesGemini) {
     try {
-      return await generarConGemini(claveGeminiPrincipal, args);
+      return await generarConGemini(clave, args);
     } catch (err) {
-      errores.push(`Gemini (clave principal): ${mensajeError(err)}`);
-    }
-  }
-
-  if (claveGeminiRespaldo) {
-    try {
-      return await generarConGemini(claveGeminiRespaldo, args);
-    } catch (err) {
-      errores.push(`Gemini (clave de respaldo): ${mensajeError(err)}`);
+      errores.push(`Gemini (${etiqueta}): ${mensajeError(err)}`);
     }
   }
 
