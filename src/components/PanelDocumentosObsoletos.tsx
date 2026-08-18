@@ -94,30 +94,32 @@ export function PanelDocumentosObsoletos({ onVolver }: Props) {
   );
 
   return (
-    <div className="mx-auto max-w-2xl animate-fade-in-up px-6 py-10">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <p className="text-[11px] font-medium uppercase tracking-wide text-system">
-            Configuración
-          </p>
-          <h1 className="mt-1 text-[22px] font-semibold leading-tight tracking-[-0.01em] text-ink">
-            Documentos obsoletos
-          </h1>
-          <p className="mt-2 text-[13px] leading-relaxed text-muted">
+    <div className="h-pantalla flex animate-fade-in flex-col bg-paper">
+      {/* Barra fija: el botón "Volver" antes vivía arriba de la lista y
+          scrolleaba junto con ella, así que con varios documentos se iba de
+          pantalla. Ahora queda siempre visible (mismo patrón sticky que el
+          resto de la app, ver page.tsx). */}
+      <div className="material-chrome-white inset-seguro-x sticky top-0 z-10 flex shrink-0 items-center justify-between gap-3 border-b border-line/70 px-4 py-3 shadow-soft sm:px-6">
+        <button
+          onClick={onVolver}
+          className="-ml-1.5 flex min-h-[38px] shrink-0 items-center gap-1 rounded-lg px-2.5 text-[13px] font-medium text-system transition-all duration-150 ease-spring hover:bg-system-tint active:scale-95"
+        >
+          ← Volver
+        </button>
+        <h1 className="min-w-0 truncate text-[13px] font-semibold text-ink sm:text-[14px]">
+          Documentos obsoletos
+        </h1>
+      </div>
+
+      <div className="inset-seguro-x min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-2xl animate-fade-in-up px-4 py-6 sm:px-6 sm:py-8">
+          <p className="mb-6 text-[13px] leading-relaxed text-muted">
             Códigos de Instructivo, Procedimiento o Formato que ya no están vigentes (ej.{" "}
             <span className="font-mono">IPRO-P200</span>). Si un RMD sigue citando alguno, se
             genera automáticamente una alerta en la revisión.
           </p>
-        </div>
-        <button
-          onClick={onVolver}
-          className="shrink-0 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-system transition-all duration-150 ease-spring hover:bg-system-tint active:scale-95"
-        >
-          ← Volver
-        </button>
-      </div>
 
-      <form onSubmit={agregarDocumento} className="mb-8 rounded-xl border border-line bg-surface p-4 shadow-soft">
+          <form onSubmit={agregarDocumento} className="mb-8 rounded-xl border border-line bg-surface p-4 shadow-soft">
         <label className="mb-1.5 block text-[12px] font-medium text-ink">Código del documento</label>
         <input
           value={codigo}
@@ -194,6 +196,8 @@ export function PanelDocumentosObsoletos({ onVolver }: Props) {
           ))}
         </ul>
       )}
+        </div>
+      </div>
     </div>
   );
 }

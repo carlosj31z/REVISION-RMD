@@ -689,17 +689,12 @@ export default function Home() {
       </div>
     );
   } else if (vista.tipo === "reglas") {
-    contenido = (
-      <div className="h-pantalla animate-fade-in-up overflow-y-auto bg-paper">
-        <PanelReglas onVolver={() => setVista({ tipo: "carga" })} />
-      </div>
-    );
+    // Sin wrapper propio: PanelReglas ya maneja su alto completo y su scroll
+    // interno (encabezado fijo + lista scrolleable), envolverlo en otro
+    // contenedor con overflow-y-auto duplicaría el scroll.
+    contenido = <PanelReglas onVolver={() => setVista({ tipo: "carga" })} />;
   } else if (vista.tipo === "documentosObsoletos") {
-    contenido = (
-      <div className="h-pantalla animate-fade-in-up overflow-y-auto bg-paper">
-        <PanelDocumentosObsoletos onVolver={() => setVista({ tipo: "carga" })} />
-      </div>
-    );
+    contenido = <PanelDocumentosObsoletos onVolver={() => setVista({ tipo: "carga" })} />;
   } else if (vista.tipo === "cargando") {
     contenido = (
       <div className="h-pantalla flex items-center justify-center">

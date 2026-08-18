@@ -204,30 +204,33 @@ export function PanelReglas({ onVolver }: Props) {
   }, [reglas, busqueda]);
 
   return (
-    <div className="inset-seguro-x mx-auto max-w-3xl animate-fade-in-up px-4 py-7 sm:px-6 sm:py-10">
-      <div className="mb-6 flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-medium uppercase tracking-wide text-system">
-            Configuración
-          </p>
-          <h1 className="mt-1 text-[22px] font-semibold leading-tight tracking-[-0.01em] text-ink">
-            Reglas permanentes de homologación
-          </h1>
-          <p className="mt-2 text-[13px] leading-relaxed text-muted">
+    <div className="h-pantalla flex animate-fade-in flex-col bg-paper">
+      {/* Barra fija: antes el botón "Volver" vivía arriba del contenido que
+          scrollea junto con la lista de reglas, así que en cuanto había
+          varias se iba de pantalla y costaba encontrarlo. Ahora queda
+          siempre visible, con el mismo patrón sticky que usa el resto de
+          la app (ver page.tsx). */}
+      <div className="material-chrome-white inset-seguro-x sticky top-0 z-10 flex shrink-0 items-center justify-between gap-3 border-b border-line/70 px-4 py-3 shadow-soft sm:px-6">
+        <button
+          onClick={onVolver}
+          className="-ml-1.5 flex min-h-[38px] shrink-0 items-center gap-1 rounded-lg px-2.5 text-[13px] font-medium text-system transition-all duration-150 ease-spring hover:bg-system-tint active:scale-95"
+        >
+          ← Volver
+        </button>
+        <h1 className="min-w-0 truncate text-[13px] font-semibold text-ink sm:text-[14px]">
+          Reglas permanentes de homologación
+        </h1>
+      </div>
+
+      <div className="inset-seguro-x min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-3xl animate-fade-in-up px-4 py-6 sm:px-6 sm:py-8">
+          <p className="mb-6 text-[13px] leading-relaxed text-muted">
             Instrucciones fijas que se aplican solas en todas las revisiones futuras de la
             sección/etapa que indiques. Como nadie las vuelve a leer al aplicarlas, conviene
             revisarlas con la IA antes de guardarlas.
           </p>
-        </div>
-        <button
-          onClick={onVolver}
-          className="shrink-0 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-system transition-all duration-150 ease-spring hover:bg-system-tint active:scale-95"
-        >
-          ← Volver
-        </button>
-      </div>
 
-      {/* ---------- Redacción de una regla nueva ---------- */}
+          {/* ---------- Redacción de una regla nueva ---------- */}
       <div className="mb-8 rounded-xl border border-line bg-surface p-4 shadow-soft">
         <label className="mb-1.5 block text-[12px] font-medium text-ink">Nueva regla</label>
         <textarea
@@ -512,6 +515,8 @@ export function PanelReglas({ onVolver }: Props) {
           )}
         </div>
       )}
+        </div>
+      </div>
     </div>
   );
 }
