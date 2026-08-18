@@ -28,13 +28,16 @@ function construirNomenclatura(campos: {
     .map((p) => p.trim())
     .filter(Boolean);
   const cabecera = partes.join("/");
+  // Punto y coma en todos los separadores de la cola, no coma: título; 6M;
+  // grado — así se distingue de cualquier coma que pueda venir dentro del
+  // propio título (ej. "Cosméticos, Línea 2").
   const cola = [
     campos.titulo.trim(),
     ETIQUETA_6M[campos.categoria6M].toLowerCase(),
     ETIQUETA_GRADO[campos.gradoImpacto].toLowerCase(),
   ]
     .filter(Boolean)
-    .join(", ");
+    .join("; ");
   if (!cabecera && !cola) return "";
   return `${cabecera}${cabecera && cola ? "; " : ""}${cola}${cola ? "." : ""}`;
 }
@@ -130,7 +133,7 @@ export function GeneradorNomenclatura() {
             Generar nomenclatura del Control de Cambio
           </span>
           <span className="block text-[11.5px] text-muted">
-            Arma el identificador estándar (código/aprobador/fecha; título, 6M, grado) a partir
+            Arma el identificador estándar (código/aprobador/fecha; título; 6M; grado) a partir
             del correo o PDF del Control de Cambio — sin necesidad de un RMD.
           </span>
         </span>

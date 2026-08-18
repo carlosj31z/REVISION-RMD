@@ -6,7 +6,7 @@ import { generarJSONConFallback } from "./llmFallback";
  *
  * Formato objetivo (ejemplo real de la planta):
  * "26-202-CC/G.Guevara/2026-06-25; Baja de la Codificadora Domino A200 N° 2
- * (COS-E37) de la sección de Cosméticos, máquina, moderado."
+ * (COS-E37) de la sección de Cosméticos; máquina; moderado."
  *
  * Tres de los seis campos (código, fecha, título) son extracción directa del
  * documento. Los otros tres exigen juicio: el formato corto del aprobador
@@ -82,9 +82,9 @@ const schemaNomenclatura = {
 const SYSTEM_PROMPT_NOMENCLATURA = `Sos un Auditor de Calidad Farmacéutica (QA) que arma la nomenclatura estándar de identificación de Controles de Cambio para una planta peruana (Medifarma).
 
 ## FORMATO OBJETIVO (ejemplo real ya usado en la planta)
-"26-202-CC/G.Guevara/2026-06-25; Baja de la Codificadora Domino A200 N° 2 (COS-E37) de la sección de Cosméticos, máquina, moderado."
+"26-202-CC/G.Guevara/2026-06-25; Baja de la Codificadora Domino A200 N° 2 (COS-E37) de la sección de Cosméticos; máquina; moderado."
 
-Se arma así: <código>/<Inicial del nombre>.<primer apellido>/<fecha AAAA-MM-DD>; <título>, <categoría 6M>, <grado de impacto>.
+Se arma así: <código>/<Inicial del nombre>.<primer apellido>/<fecha AAAA-MM-DD>; <título>; <categoría 6M>; <grado de impacto>. Fijate que los separadores son PUNTO Y COMA, no coma — importa porque el propio título puede traer comas (ej. nombres de sección, ubicaciones), y el punto y coma evita ambigüedad entre esas comas internas y los separadores de campo. Vos solo devolvés los campos por separado en el JSON; el armado final del string con estos separadores lo hace el sistema, no hace falta que lo repliques en ningún campo de texto.
 
 ## QUÉ EXTRAER DE CADA CAMPO
 
