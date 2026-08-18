@@ -140,9 +140,11 @@ export function PanelDiferenciasBorrador({
               </>
             ) : (
               <>
-                {diferenciasReales.length} {conBorrador ? "diferencia" : "observación"}
-                {diferenciasReales.length !== 1 ? "s" : ""} detectada
-                {diferenciasReales.length !== 1 ? "s" : ""}
+                {diferenciasReales.length}{" "}
+                {conBorrador
+                  ? `diferencia${diferenciasReales.length !== 1 ? "s" : ""}`
+                  : `observaci${diferenciasReales.length !== 1 ? "ones" : "ón"}`}{" "}
+                detectada{diferenciasReales.length !== 1 ? "s" : ""}
               </>
             )}
           </span>

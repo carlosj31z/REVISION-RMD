@@ -28,6 +28,13 @@ type VistaResultado =
       pdfUrl: string;
       resultado: ResultadoRevisionIA;
       revisionId: string | null;
+      // Se conserva para poder regenerar el blob URL si el navegador lo
+      // invalida (ver "recuperarPdfInvalido" más abajo): al minimizar la
+      // ventana y volver a abrirla, Chrome puede liberar de memoria el blob
+      // detrás de una URL blob:, y pdf.js falla con "Unexpected server
+      // response (0)" al intentar volver a leerlo — el archivo en sí sigue
+      // intacto, solo se perdió el registro interno de esa URL puntual.
+      archivoVigente: File;
     }
   | {
       tipo: "resultado-borrador";
@@ -35,6 +42,7 @@ type VistaResultado =
       pdfUrl: string;
       resultado: ResultadoComparacionBorrador;
       revisionId: string | null;
+      archivoVigente: File;
       // false = se subió el RMD "corregido" sin borrador: el resultado es
       // una verificación de cumplimiento (reglas permanentes + documentos
       // obsoletos), no una comparación contra otro documento.
@@ -47,6 +55,7 @@ type VistaResultado =
       // "ver en el borrador" desde una tarjeta de diferencia, sin necesidad
       // de volver a subir el archivo.
       pdfBorradorUrl?: string;
+      archivoBorrador?: File;
       rmdBorrador?: RMDExtraido;
       // Documentos escaneados: la estructura no salió del texto embebido sino
       // de leer el PDF con IA. El analista tiene que saberlo para verificar
@@ -155,6 +164,50 @@ export default function Home() {
     []
   );
 
+  /**
+   * Al minimizar la ventana y volver a abrirla, Chrome puede liberar de
+   * memoria el blob detrás de una URL blob: (o directamente descartar la
+   * pestaña en segundo plano bajo su modo de ahorro de memoria). pdf.js
+   * entonces falla con "Unexpected server response (0)" al intentar releer
+   * esa URL puntual, aunque el archivo original nunca se tocó. Como el
+   * File original sigue en memoria (se conserva en la sesión desde que se
+   * subió), alcanza con generar una URL blob: NUEVA a partir de él — sin
+   * pedirle al analista que vuelva a seleccionar el archivo.
+   */
+  const recuperarPdfVigenteInvalido = useCallback(
+    (sesionId: string) => {
+      actualizarSesion(sesionId, (s) => {
+        const urlAnterior = s.vista.pdfUrl;
+        const pdfUrl = URL.createObjectURL(s.vista.archivoVigente);
+        // La URL vieja ya está inválida (por eso estamos acá), pero seguía
+        // registrada en el navegador — liberarla explícitamente evita
+        // acumular blobs muertos si esto se repite varias veces.
+        try {
+          URL.revokeObjectURL(urlAnterior);
+        } catch {}
+        return { ...s, vista: { ...s.vista, pdfUrl } };
+      });
+    },
+    [actualizarSesion]
+  );
+
+  const recuperarPdfBorradorInvalido = useCallback(
+    (sesionId: string) => {
+      actualizarSesion(sesionId, (s) => {
+        if (s.vista.tipo !== "resultado-borrador" || !s.vista.archivoBorrador) return s;
+        const urlAnterior = s.vista.pdfBorradorUrl;
+        const pdfBorradorUrl = URL.createObjectURL(s.vista.archivoBorrador);
+        if (urlAnterior) {
+          try {
+            URL.revokeObjectURL(urlAnterior);
+          } catch {}
+        }
+        return { ...s, vista: { ...s.vista, pdfBorradorUrl } };
+      });
+    },
+    [actualizarSesion]
+  );
+
   const abrirNuevaSesion = useCallback((vistaResultado: VistaResultado) => {
     const id =
       typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -232,6 +285,7 @@ export default function Home() {
           pdfUrl: URL.createObjectURL(input.rmdFile),
           resultado: data.resultado,
           revisionId: data.revisionId ?? null,
+          archivoVigente: input.rmdFile,
         });
       } catch (err: any) {
         setVista({ tipo: "error", mensaje: err.message ?? "Ocurrió un error inesperado." });
@@ -349,6 +403,7 @@ export default function Home() {
           tipo: "resultado-borrador",
           rmd: estructuraVigente,
           pdfUrl: URL.createObjectURL(input.rmdVigenteFile),
+          archivoVigente: input.rmdVigenteFile,
           resultado: data.resultado,
           revisionId: data.revisionId ?? null,
           conBorrador: !!estructuraBorrador,
@@ -356,6 +411,7 @@ export default function Home() {
           pdfBorradorUrl: input.rmdBorradorFile
             ? URL.createObjectURL(input.rmdBorradorFile)
             : undefined,
+          archivoBorrador: input.rmdBorradorFile,
           rmdBorrador: estructuraBorrador ?? undefined,
           avisosExtraccion: avisos.length > 0 ? avisos : undefined,
         });
@@ -481,7 +537,7 @@ export default function Home() {
         const pdfUrl = URL.createObjectURL(file);
         actualizarSesion(sesion.id, (s) => ({
           ...s,
-          vista: { ...s.vista, rmd: estructura, pdfUrl },
+          vista: { ...s.vista, rmd: estructura, pdfUrl, archivoVigente: file },
           verificacionCorreccion: { ...s.verificacionCorreccion, ...nuevaVerificacion },
         }));
       } catch (err: any) {
@@ -841,7 +897,11 @@ export default function Home() {
               vivos obligaría al visor a renderizar el PDF en un contenedor de
               ancho 0 y saldría a una escala equivocada. */}
           <div className={vistaMovil === "documento" ? "min-h-0" : "hidden min-h-0 lg:block"}>
-            <PanelRMDVigente pdfUrl={vr.pdfUrl} salto={saltoPdf} />
+            <PanelRMDVigente
+              pdfUrl={vr.pdfUrl}
+              salto={saltoPdf}
+              onBlobInvalido={() => recuperarPdfVigenteInvalido(sesionActiva.id)}
+            />
           </div>
           <div className={vistaMovil === "observaciones" ? "min-h-0" : "hidden min-h-0 lg:block"}>
           {vr.tipo === "resultado" ? (
@@ -878,6 +938,7 @@ export default function Home() {
             pdfUrl={vr.pdfBorradorUrl}
             salto={modalBorrador}
             onClose={() => setModalBorrador(null)}
+            onBlobInvalido={() => recuperarPdfBorradorInvalido(sesionActiva.id)}
           />
         )}
       </div>

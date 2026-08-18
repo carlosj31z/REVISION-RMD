@@ -7,12 +7,13 @@ interface Props {
   pdfUrl: string;
   salto: SaltoPdf;
   onClose: () => void;
+  onBlobInvalido?: () => void;
 }
 
 /** Modal que muestra el PDF del borrador de Producción, saltando directo al
  * punto donde se originó una diferencia — sin reemplazar el visor principal
  * (que sigue mostrando el RMD vigente). */
-export function ModalVisorBorrador({ pdfUrl, salto, onClose }: Props) {
+export function ModalVisorBorrador({ pdfUrl, salto, onClose, onBlobInvalido }: Props) {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -49,7 +50,7 @@ export function ModalVisorBorrador({ pdfUrl, salto, onClose }: Props) {
           </button>
         </div>
         <div className="min-h-0 flex-1">
-          <VisorPdf pdfUrl={pdfUrl} salto={salto} />
+          <VisorPdf pdfUrl={pdfUrl} salto={salto} onBlobInvalido={onBlobInvalido} />
         </div>
       </div>
     </div>

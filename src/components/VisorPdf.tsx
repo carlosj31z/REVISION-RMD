@@ -20,6 +20,26 @@ export interface SaltoPdf {
 interface Props {
   pdfUrl: string;
   salto: SaltoPdf | null;
+  /**
+   * Se dispara cuando el navegador invalidó el blob detrás de `pdfUrl` (ej.
+   * tras minimizar la ventana y volver a abrirla: Chrome puede liberar de
+   * memoria un blob en segundo plano). El padre debe generar una URL blob:
+   * NUEVA a partir del archivo original y pasarla como `pdfUrl` — este
+   * componente no guarda el File, sólo detecta el síntoma.
+   */
+  onBlobInvalido?: () => void;
+}
+
+/**
+ * pdf.js reporta la pérdida de un blob: como un ResponseException con
+ * status 0 (ver network.js del paquete: "Unexpected server response (0)
+ * while retrieving PDF..."), que es justamente el mensaje que vio el
+ * usuario al reabrir la ventana minimizada. status 0 en un fetch normal
+ * suele ser CORS, pero para una URL blob: sólo significa una cosa: el
+ * navegador ya no tiene el blob registrado detrás de esa URL.
+ */
+function esBlobInvalidado(err: any): boolean {
+  return err?.name === "ResponseException" && err?.status === 0;
 }
 
 /**
@@ -32,7 +52,7 @@ interface Props {
  * el analista se desplaza libremente, y un clic en una diferencia hace
  * scroll automático hasta la página/línea correspondiente.
  */
-export function VisorPdf({ pdfUrl, salto }: Props) {
+export function VisorPdf({ pdfUrl, salto, onBlobInvalido }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const paginaRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const canvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map());
@@ -58,6 +78,37 @@ export function VisorPdf({ pdfUrl, salto }: Props) {
   const [paginasRenderizadas, setPaginasRenderizadas] = useState<ReadonlySet<number>>(
     () => new Set()
   );
+  // Cuenta fallos consecutivos de blob invalidado, para no pedir una
+  // recuperación infinita si por algún motivo el archivo original tampoco
+  // se puede releer (ej. el propio File quedó corrupto, no sólo la URL).
+  const fallosBlobRef = useRef(0);
+  // Ref (no prop directa) porque este callback se usa desde efectos cuyas
+  // dependencias no incluyen onBlobInvalido: sin esto, un onBlobInvalido
+  // recreado en cada render del padre podría quedar obsoleto dentro del
+  // efecto hasta que otra dependencia lo volviera a disparar.
+  const onBlobInvalidoRef = useRef(onBlobInvalido);
+  useEffect(() => {
+    onBlobInvalidoRef.current = onBlobInvalido;
+  }, [onBlobInvalido]);
+
+  /**
+   * pdf.js NO sólo puede fallar al cargar el documento: una URL blob: admite
+   * range requests, así que `getDocument()` suele completarse con apenas el
+   * índice del archivo, y el resto de las páginas se piden de a poco al
+   * renderizarlas o al resaltar un paso. Si el blob se invalidó DESPUÉS de
+   * la carga inicial (el caso real reportado: minimizar la ventana y volver
+   * más tarde), el fallo aparece recién ahí, no en la carga. Por eso este
+   * chequeo se repite en los tres puntos donde pdf.js toca la red: la carga
+   * inicial, el render de cada página, y la lectura de texto para resaltar.
+   */
+  function intentarRecuperarBlob(err: any): boolean {
+    if (!esBlobInvalidado(err) || !onBlobInvalidoRef.current || fallosBlobRef.current >= 2) {
+      return false;
+    }
+    fallosBlobRef.current += 1;
+    onBlobInvalidoRef.current();
+    return true;
+  }
 
   // Cargar el documento (una vez por pdfUrl). Import dinámico: pdfjs-dist toca
   // globals de navegador (DOMMatrix, etc.) que no existen durante el SSR de
@@ -83,12 +134,20 @@ export function VisorPdf({ pdfUrl, salto }: Props) {
       })
       .then((doc) => {
         if (cancelado) return;
+        fallosBlobRef.current = 0;
         setPdfDoc(doc);
         setNumPaginas(doc.numPages);
         setCargando(false);
       })
       .catch((err) => {
         if (cancelado) return;
+        // El blob detrás de esta URL ya no existe (típico tras minimizar la
+        // ventana y volver: el navegador lo liberó de memoria). Si hay forma
+        // de pedir una URL nueva, delegamos la recuperación al padre en vez
+        // de mostrar el error crudo de pdf.js — el archivo original sigue
+        // intacto. El spinner de carga sigue visible: en cuanto el padre
+        // entregue el pdfUrl nuevo, este mismo efecto se vuelve a disparar.
+        if (intentarRecuperarBlob(err)) return;
         setError(err?.message ?? "No se pudo cargar el PDF.");
         setCargando(false);
       });
@@ -172,6 +231,12 @@ export function VisorPdf({ pdfUrl, salto }: Props) {
           // Cancelar una tarea a propósito (arriba) hace que su promesa
           // rechace con esto — es el flujo esperado, no un error real.
           if (err?.name === "RenderingCancelledException") continue;
+          // El blob se invalidó a mitad de camino (páginas ya visibles OK,
+          // una posterior falla al pedirla). Frenar el resto del recorrido
+          // y esperar a que el padre entregue un pdfUrl nuevo — seguir
+          // pidiendo páginas contra la misma URL muerta solo acumularía
+          // el mismo error por cada una que falte.
+          if (intentarRecuperarBlob(err)) return;
           if (!cancelado) console.error(`Error renderizando página ${num} del PDF:`, err);
         }
       }
@@ -311,6 +376,7 @@ export function VisorPdf({ pdfUrl, salto }: Props) {
           for (const m of marcasPulso) m.classList.remove("marca-pulso");
         }, 1950);
       } catch (err) {
+        if (intentarRecuperarBlob(err)) return;
         console.error("Error resaltando el paso en el PDF:", err);
       }
     })();
