@@ -64,6 +64,7 @@ const RE_PASO = /^(\d\.\d(?:\.\d+)?)\.-\s*(.+)$/;
 const RE_INICIO_PRECAUCIONES = /PRECAUCIONES/i;
 const RE_INICIO_NOTAS_IMPORTANTES = /NOTAS IMPORTANTES DURANTE EL PROCESO/i;
 const RE_INICIO_EQUIPOS = /1\.-\s*EQUIPOS\s*\/\s*INSTRUMENTOS\s*\/\s*MATERIALES/i;
+const RE_INICIO_CONDICIONES_AMBIENTALES = /CONDICIONES\s+AMBIENTALES/i;
 const RE_ENCABEZADO_PRODUCTO = /REGISTRO DE MANUFACTURA\s+(\w+)/i;
 const RE_CODIGO_VERSION =
   /(\d{10})\s+([\d/]+)\s+(\d+)\s+(Autorizado|Ingresado)\/\s*([\d-]+)\s*\/([A-Z]+)/;
@@ -117,7 +118,7 @@ export function parsearEstructuraRMD(
       lineas,
       "CONDICIONES  AMBIENTALES",
       "4.-PROCEDIMIENTO",
-      /CONDICIONES\s+AMBIENTALES/i
+      RE_INICIO_CONDICIONES_AMBIENTALES
     ),
     procedimiento: extraerPasosProcedimiento(lineasConPagina),
     especificacionesProducto: extraerEspecificaciones(texto),
@@ -140,6 +141,7 @@ function extraerPaginasSeccionesGenerales(
     ["precauciones", RE_INICIO_PRECAUCIONES],
     ["notas_importantes", RE_INICIO_NOTAS_IMPORTANTES],
     ["equipos_instrumentos", RE_INICIO_EQUIPOS],
+    ["condiciones_ambientales", RE_INICIO_CONDICIONES_AMBIENTALES],
   ];
   for (const [seccion, regex] of marcadores) {
     const encontrada = lineasConPagina.find((l) => regex.test(l.texto));

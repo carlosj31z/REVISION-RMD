@@ -20,7 +20,11 @@ export type EtapaCodigo = "FABRICACION" | "RECUBRIMIENTO" | "ENVASE" | "ACONDICI
 // Secciones del RMD que no son pasos numerados del procedimiento, pero que
 // igual tienen una ubicación concreta en el PDF a la que se puede navegar
 // (a diferencia de, por ejemplo, la tabla de insumos o el encabezado).
-export type SeccionGeneral = "precauciones" | "notas_importantes" | "equipos_instrumentos";
+export type SeccionGeneral =
+  | "precauciones"
+  | "notas_importantes"
+  | "equipos_instrumentos"
+  | "condiciones_ambientales";
 
 // Punto de destino al navegar desde una tarjeta de hallazgo hacia el visor
 // de PDF: un paso numérico del procedimiento, o una sección general si el

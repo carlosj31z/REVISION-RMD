@@ -7,6 +7,10 @@
  * de navegador disponible no puede scriptear la subida de un archivo.
  */
 
+// Solo el tipo, sin runtime: types/rmd.ts no toca React/DOM/pdfjs, así que
+// importarlo acá no compromete el aislamiento "lógica pura" del módulo.
+import type { SeccionGeneral } from "@/types/rmd";
+
 export interface RectanguloResaltado {
   x: number;
   y: number;
@@ -167,27 +171,24 @@ function ubicarFragmento(
 
 const TOLERANCIA_Y = 2.5;
 
+interface LineaUbicada {
+  y: number;
+  items: ItemUbicado[];
+}
+
 /**
- * Calcula los rectángulos de resaltado, en coordenadas de canvas, para un
- * paso del procedimiento:
- *
- *  - Resalta el paso COMPLETO (desde "<pasoId>.-" hasta el siguiente paso
- *    numerado), sin cortarlo a unas pocas líneas.
- *  - Si se pasa `textoBuscado` (la cita textual que el análisis marcó como
- *    observada) y se encuentra dentro del paso, ese fragmento se devuelve
- *    con `foco: true` para resaltarlo fuerte, y el resto del paso queda como
- *    contexto suave. Si no se encuentra, todo el paso va con `foco: true`.
- *
- * `transformViewport` y `escala` deben venir del MISMO viewport con el que se
- * renderizó el canvas (ver calcularEscala).
+ * Convierte los items crudos de `page.getTextContent()` a líneas físicas
+ * ordenadas por lectura (arriba a abajo, izquierda a derecha), en las mismas
+ * coordenadas de canvas que usó el render. Paso compartido tanto por el
+ * resaltado de un paso numerado como por el de una sección general — lo
+ * único que cambia entre ambos es CÓMO se ubican los índices de inicio/fin
+ * dentro de estas líneas.
  */
-export function calcularRectangulosResaltado(
+function construirLineas(
   contenido: ContenidoTexto,
   transformViewport: number[],
-  escala: number,
-  pasoId: string,
-  textoBuscado?: string
-): RectanguloResaltado[] {
+  escala: number
+): LineaUbicada[] {
   const estilos = contenido.styles ?? {};
 
   const items: ItemUbicado[] = [];
@@ -225,7 +226,7 @@ export function calcularRectangulosResaltado(
   // Agrupar en líneas físicas por baseline (con tolerancia de subpíxel) y
   // ordenar cada una de izquierda a derecha, para reconstruir el orden de
   // lectura real del documento.
-  const lineas: { y: number; items: ItemUbicado[] }[] = [];
+  const lineas: LineaUbicada[] = [];
   for (const it of items) {
     let linea = lineas.find((l) => Math.abs(l.y - it.yBase) < TOLERANCIA_Y);
     if (!linea) {
@@ -236,57 +237,55 @@ export function calcularRectangulosResaltado(
   }
   for (const l of lineas) l.items.sort((a, b) => a.x - b.x);
   lineas.sort((a, b) => a.y - b.y);
+  return lineas;
+}
 
-  const patron = `${pasoId}.-`;
-  const idxInicio = lineas.findIndex((l) => l.items.map((i) => i.str).join("").includes(patron));
-  if (idxInicio === -1) return [];
-
-  // Fin del paso: la siguiente línea que arranca con OTRO paso numerado.
-  // Sin tope artificial de líneas — el paso se resalta entero.
-  const patronNuevoPaso = /^\d+\.\d+(?:\.\d+)?\.-/;
-  const MAX_LINEAS_SEGURIDAD = 40; // sólo para no desbocarse ante un PDF atípico
-  let idxFin = lineas.length;
-  for (let i = idxInicio + 1; i < lineas.length && i < idxInicio + MAX_LINEAS_SEGURIDAD; i++) {
-    const textoLinea = lineas[i].items.map((it) => it.str).join("").trim();
-    if (patronNuevoPaso.test(textoLinea)) {
-      idxFin = i;
-      break;
-    }
-    idxFin = i + 1;
-  }
-
-  // Aplanar el paso a una secuencia de caracteres, cada uno sabiendo de qué
+/**
+ * Dado un rango de líneas ya delimitado [idxInicio, idxFin) y un patrón de
+ * arranque textual (para no resaltar antes de él, por si la línea trae texto
+ * de otra columna a la izquierda), arma los rectángulos de resaltado —
+ * opcionalmente con un fragmento puntual (`textoBuscado`) marcado más fuerte
+ * dentro del rango, y el resto como contexto suave.
+ */
+function resaltarRango(
+  lineas: LineaUbicada[],
+  idxInicio: number,
+  idxFin: number,
+  patronArranque: string,
+  textoBuscado?: string
+): RectanguloResaltado[] {
+  // Aplanar el rango a una secuencia de caracteres, cada uno sabiendo de qué
   // ítem viene y en qué offset — así cualquier rango de texto se traduce a
   // rectángulos con la misma lógica.
   type Caracter = { item: ItemUbicado | null; offset: number };
   const caracteres: Caracter[] = [];
-  let textoPaso = "";
+  let textoRango = "";
   for (let i = idxInicio; i < idxFin; i++) {
     for (const item of lineas[i].items) {
       for (let k = 0; k < item.str.length; k++) {
         caracteres.push({ item, offset: k });
-        textoPaso += item.str[k];
+        textoRango += item.str[k];
       }
     }
     // Separador entre líneas (no pertenece a ningún ítem: se omite al pintar).
     caracteres.push({ item: null, offset: -1 });
-    textoPaso += " ";
+    textoRango += " ";
   }
 
-  // El resaltado arranca en el "<pasoId>.-", no antes (la línea puede traer
-  // texto de otra columna a la izquierda).
-  const desdePaso = Math.max(0, textoPaso.indexOf(patron));
+  // El resaltado arranca en el patrón (ej. "4.4.5.-" o "PRECAUCIONES"), no
+  // antes.
+  const desdeInicio = Math.max(0, textoRango.indexOf(patronArranque));
 
-  // Ubicar el fragmento exacto señalado por el análisis dentro del paso.
+  // Ubicar el fragmento exacto señalado por el análisis dentro del rango.
   let rangoFoco: { desde: number; hasta: number } | null = null;
   if (textoBuscado && textoBuscado.trim().length >= 4) {
-    const paso = normalizarConMapa(textoPaso);
+    const rango = normalizarConMapa(textoRango);
     const buscado = normalizarConMapa(textoBuscado);
-    const hallazgo = ubicarFragmento(paso.normalizado, buscado.normalizado);
+    const hallazgo = ubicarFragmento(rango.normalizado, buscado.normalizado);
     if (hallazgo) {
-      const largo = Math.min(hallazgo.largo, paso.normalizado.length - hallazgo.pos);
-      const desde = paso.mapa[hallazgo.pos];
-      const hasta = (paso.mapa[hallazgo.pos + largo - 1] ?? paso.mapa[paso.mapa.length - 1]) + 1;
+      const largo = Math.min(hallazgo.largo, rango.normalizado.length - hallazgo.pos);
+      const desde = rango.mapa[hallazgo.pos];
+      const hasta = (rango.mapa[hallazgo.pos + largo - 1] ?? rango.mapa[rango.mapa.length - 1]) + 1;
       if (Number.isFinite(desde) && Number.isFinite(hasta) && hasta > desde) {
         rangoFoco = { desde, hasta };
       }
@@ -347,14 +346,119 @@ export function calcularRectangulosResaltado(
   };
 
   if (!rangoFoco) {
-    // Sin fragmento puntual: se resalta el paso entero con intensidad normal.
-    return rectsDeRango(desdePaso, caracteres.length, true);
+    // Sin fragmento puntual: se resalta el rango entero con intensidad normal.
+    return rectsDeRango(desdeInicio, caracteres.length, true);
   }
 
-  // Con fragmento: el paso entero queda como contexto suave y el fragmento
+  // Con fragmento: el rango entero queda como contexto suave y el fragmento
   // señalado se dibuja encima con intensidad fuerte.
   return [
-    ...rectsDeRango(desdePaso, caracteres.length, false),
+    ...rectsDeRango(desdeInicio, caracteres.length, false),
     ...rectsDeRango(rangoFoco.desde, rangoFoco.hasta, true),
   ];
+}
+
+/**
+ * Calcula los rectángulos de resaltado, en coordenadas de canvas, para un
+ * paso del procedimiento:
+ *
+ *  - Resalta el paso COMPLETO (desde "<pasoId>.-" hasta el siguiente paso
+ *    numerado), sin cortarlo a unas pocas líneas.
+ *  - Si se pasa `textoBuscado` (la cita textual que el análisis marcó como
+ *    observada) y se encuentra dentro del paso, ese fragmento se devuelve
+ *    con `foco: true` para resaltarlo fuerte, y el resto del paso queda como
+ *    contexto suave. Si no se encuentra, todo el paso va con `foco: true`.
+ *
+ * `transformViewport` y `escala` deben venir del MISMO viewport con el que se
+ * renderizó el canvas (ver calcularEscala).
+ */
+export function calcularRectangulosResaltado(
+  contenido: ContenidoTexto,
+  transformViewport: number[],
+  escala: number,
+  pasoId: string,
+  textoBuscado?: string
+): RectanguloResaltado[] {
+  const lineas = construirLineas(contenido, transformViewport, escala);
+  if (lineas.length === 0) return [];
+
+  const patron = `${pasoId}.-`;
+  const idxInicio = lineas.findIndex((l) => l.items.map((i) => i.str).join("").includes(patron));
+  if (idxInicio === -1) return [];
+
+  // Fin del paso: la siguiente línea que arranca con OTRO paso numerado.
+  // Sin tope artificial de líneas — el paso se resalta entero.
+  const patronNuevoPaso = /^\d+\.\d+(?:\.\d+)?\.-/;
+  const MAX_LINEAS_SEGURIDAD = 40; // sólo para no desbocarse ante un PDF atípico
+  let idxFin = lineas.length;
+  for (let i = idxInicio + 1; i < lineas.length && i < idxInicio + MAX_LINEAS_SEGURIDAD; i++) {
+    const textoLinea = lineas[i].items.map((it) => it.str).join("").trim();
+    if (patronNuevoPaso.test(textoLinea)) {
+      idxFin = i;
+      break;
+    }
+    idxFin = i + 1;
+  }
+
+  return resaltarRango(lineas, idxInicio, idxFin, patron, textoBuscado);
+}
+
+/**
+ * Marcadores de inicio de cada sección general navegable, duplicados
+ * deliberadamente de pdfExtractor.ts: ese módulo importa "unpdf" (solo
+ * server/Node) y este vive en el cliente (junto a VisorPdf), así que no se
+ * puede compartir el módulo — hay que mantenerlos sincronizados a mano si
+ * cambia el layout de los RMD.
+ */
+const MARCADOR_INICIO_SECCION: Record<SeccionGeneral, RegExp> = {
+  precauciones: /PRECAUCIONES/i,
+  notas_importantes: /NOTAS IMPORTANTES DURANTE EL PROCESO/i,
+  equipos_instrumentos: /1\.-\s*EQUIPOS\s*\/\s*INSTRUMENTOS\s*\/\s*MATERIALES/i,
+  condiciones_ambientales: /CONDICIONES\s+AMBIENTALES/i,
+};
+
+// Cualquier otro marcador de sección (o el inicio del procedimiento numerado)
+// sirve de límite de fin: sólo hace falta parar antes de que arranque la
+// PRÓXIMA sección en la misma página, no reproducir el recorte quirúrgico
+// que hace pdfExtractor.ts para construir el texto guardado en BD.
+const MARCADOR_FIN_SECCION =
+  /PRECAUCIONES|NOTAS IMPORTANTES DURANTE EL PROCESO|1\.-\s*EQUIPOS\s*\/\s*INSTRUMENTOS\s*\/\s*MATERIALES|2\.-\s*INSUMOS|CONDICIONES\s+AMBIENTALES|4\.-\s*PROCEDIMIENTO|VERIFICADO POR/i;
+
+/**
+ * Igual que `calcularRectangulosResaltado`, pero para una sección general
+ * (Precauciones, Notas Importantes, Equipos/Instrumentos/Materiales o
+ * Condiciones Ambientales) en vez de un paso numerado del procedimiento:
+ * resalta desde el encabezado de la sección hasta el próximo marcador de
+ * sección que aparezca en la misma página (o el final de la página si no
+ * hay ninguno), con el mismo sistema de foco/contexto si se pasa una cita.
+ */
+export function calcularRectangulosResaltadoSeccion(
+  contenido: ContenidoTexto,
+  transformViewport: number[],
+  escala: number,
+  seccion: SeccionGeneral,
+  textoBuscado?: string
+): RectanguloResaltado[] {
+  const lineas = construirLineas(contenido, transformViewport, escala);
+  if (lineas.length === 0) return [];
+
+  const inicioRegex = MARCADOR_INICIO_SECCION[seccion];
+
+  const idxInicio = lineas.findIndex((l) => inicioRegex.test(l.items.map((i) => i.str).join("")));
+  if (idxInicio === -1) return [];
+
+  let idxFin = lineas.length;
+  for (let i = idxInicio + 1; i < lineas.length; i++) {
+    const textoLinea = lineas[i].items.map((it) => it.str).join("");
+    if (MARCADOR_FIN_SECCION.test(textoLinea)) {
+      idxFin = i;
+      break;
+    }
+  }
+
+  // El "patrón de arranque" acá no es literal (el encabezado puede traer
+  // espaciado/mayúsculas distinto al regex) — al no encontrarlo con
+  // indexOf, desdeInicio cae a 0 dentro de resaltarRango, que es
+  // exactamente lo que se quiere: resaltar desde el principio del rango.
+  return resaltarRango(lineas, idxInicio, idxFin, "", textoBuscado);
 }

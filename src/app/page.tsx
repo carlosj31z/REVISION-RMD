@@ -560,8 +560,8 @@ export default function Home() {
 
       // Preferimos un paso numérico del procedimiento (resalta la línea
       // exacta); si no hay o no se encontró, probamos con la sección
-      // general (Precauciones/Notas Importantes/Equipos), que solo hace
-      // scroll + remarca la página completa, sin línea puntual.
+      // general (Precauciones/Notas Importantes/Equipos/Condiciones
+      // Ambientales), que resalta el bloque completo de esa sección.
       if (destino.pasoId && destino.pasoId !== "N/A") {
         const paso = vista.rmd.procedimiento.find((p) => p.id === destino.pasoId);
         if (paso?.pagina) {
@@ -580,7 +580,14 @@ export default function Home() {
       if (destino.seccionGeneral) {
         const pagina = vista.rmd.paginasSeccionesGenerales[destino.seccionGeneral];
         if (pagina) {
-          setSaltoPdf((prev) => ({ pagina, token: (prev?.token ?? 0) + 1 }));
+          const seccionGeneral = destino.seccionGeneral;
+          const textoBuscado = destino.textoBuscado ?? null;
+          setSaltoPdf((prev) => ({
+            pagina,
+            seccionGeneral,
+            textoBuscado,
+            token: (prev?.token ?? 0) + 1,
+          }));
         }
       }
     },
@@ -615,7 +622,14 @@ export default function Home() {
       if (destino.seccionGeneral) {
         const pagina = rmdBorrador.paginasSeccionesGenerales[destino.seccionGeneral];
         if (pagina) {
-          setModalBorrador((prev) => ({ pagina, token: (prev?.token ?? 0) + 1 }));
+          const seccionGeneral = destino.seccionGeneral;
+          const textoBuscado = destino.textoBuscado ?? null;
+          setModalBorrador((prev) => ({
+            pagina,
+            seccionGeneral,
+            textoBuscado,
+            token: (prev?.token ?? 0) + 1,
+          }));
         }
       }
     },

@@ -42,7 +42,7 @@ Comparar un RMD vigente (extraído de PDF) contra un Control de Cambio, No Confo
 
 1. **Prohibido redactar reemplazos.** Nunca generes el texto final que debería llevar un paso. Tu campo "queExigeElControlDeCambios" debe describir o citar fielmente lo que pide el Control de Cambio, NUNCA inventar una redacción normativa nueva que no esté explícita en el Control de Cambio.
 
-2. **Localización exacta obligatoria.** Todo hallazgo debe referenciar el "pasoId" exacto del RMD vigente (ej. "4.4.23", "4.2.5") tal como aparece numerado en el documento. Si la discrepancia no corresponde a un paso específico sino al documento en general (ej. un encabezado, una tabla de insumos), usa "N/A" y describe la ubicación en "ubicacionReferencia" de forma que el analista la encuentre en segundos en SAP. Además, si ese hallazgo con "pasoId": "N/A" corresponde específicamente a la sección de PRECAUCIONES, la sección de NOTAS IMPORTANTES DURANTE EL PROCESO, o la sección 1 de EQUIPOS/INSTRUMENTOS/MATERIALES, indícalo en "seccionGeneral" ("precauciones" | "notas_importantes" | "equipos_instrumentos" respectivamente) para que el sistema pueda llevar al analista directo a esa sección del PDF. En cualquier otro caso (encabezado, tabla de insumos, condiciones ambientales, especificaciones de producto, o un hallazgo con pasoId numérico), usa "seccionGeneral": null.
+2. **Localización exacta obligatoria.** Todo hallazgo debe referenciar el "pasoId" exacto del RMD vigente (ej. "4.4.23", "4.2.5") tal como aparece numerado en el documento. Si la discrepancia no corresponde a un paso específico sino al documento en general (ej. un encabezado, una tabla de insumos), usa "N/A" y describe la ubicación en "ubicacionReferencia" de forma que el analista la encuentre en segundos en SAP. Además, si ese hallazgo con "pasoId": "N/A" corresponde específicamente a la sección de PRECAUCIONES, la sección de NOTAS IMPORTANTES DURANTE EL PROCESO, la sección 1 de EQUIPOS/INSTRUMENTOS/MATERIALES, o la sección de CONDICIONES AMBIENTALES, indícalo en "seccionGeneral" ("precauciones" | "notas_importantes" | "equipos_instrumentos" | "condiciones_ambientales" respectivamente) para que el sistema pueda llevar al analista directo a esa sección del PDF. En cualquier otro caso (encabezado, tabla de insumos, especificaciones de producto, o un hallazgo con pasoId numérico), usa "seccionGeneral": null.
 
 3. **Cero alucinación de contenido.** Si el Control de Cambio no menciona algo explícitamente, NO debes inferir una discrepancia. "textoVigenteEnRMD" debe ser una cita fiel de lo que ya dice el RMD (no una paráfrasis), y "origenControlCambio" debe ser una cita o referencia fiel del Control de Cambio. Si no puedes citar con confianza, marca "nivelConfianza": "baja" y explica la incertidumbre en "justificacion".
 
@@ -90,7 +90,7 @@ const responseSchema = {
           pasoId: { type: SchemaType.STRING },
           seccionGeneral: {
             type: SchemaType.STRING,
-            enum: ["precauciones", "notas_importantes", "equipos_instrumentos"],
+            enum: ["precauciones", "notas_importantes", "equipos_instrumentos", "condiciones_ambientales"],
             nullable: true,
           },
           ubicacionReferencia: { type: SchemaType.STRING },
@@ -286,7 +286,7 @@ Comparar dos versiones completas de un mismo RMD: el VIGENTE (el documento tal c
 
 1. **Prohibido opinar o redactar reemplazos.** No sugieras qué texto debería quedar. Solo reporta lo que dice cada documento en el punto de la diferencia.
 
-2. **Localización exacta en AMBOS documentos.** Cuando un paso existe en ambas versiones pero cambió de número (ej. "4.2.5" en el vigente pasó a ser "4.2.7" en el borrador porque se insertaron pasos nuevos antes), usa "pasoIdVigente" y "pasoIdBorrador" para ambos números y márcalo como "paso_renumerado", NO como "paso_debe_agregarse"/"paso_debe_eliminarse". No confundas una renumeración con un cambio de contenido: compara el TEXTO del paso, no solo su posición. Cuando una diferencia NO corresponda a un paso numerado (pasoIdVigente y pasoIdBorrador ambos null) pero sí a la sección de PRECAUCIONES, la sección de NOTAS IMPORTANTES DURANTE EL PROCESO, o la sección 1 de EQUIPOS/INSTRUMENTOS/MATERIALES del RMD vigente, indícalo en "seccionGeneral" ("precauciones" | "notas_importantes" | "equipos_instrumentos") para que el sistema pueda llevar al analista directo a esa sección del PDF vigente. En cualquier otro caso usa "seccionGeneral": null.
+2. **Localización exacta en AMBOS documentos.** Cuando un paso existe en ambas versiones pero cambió de número (ej. "4.2.5" en el vigente pasó a ser "4.2.7" en el borrador porque se insertaron pasos nuevos antes), usa "pasoIdVigente" y "pasoIdBorrador" para ambos números y márcalo como "paso_renumerado", NO como "paso_debe_agregarse"/"paso_debe_eliminarse". No confundas una renumeración con un cambio de contenido: compara el TEXTO del paso, no solo su posición. Cuando una diferencia NO corresponda a un paso numerado (pasoIdVigente y pasoIdBorrador ambos null) pero sí a la sección de PRECAUCIONES, la sección de NOTAS IMPORTANTES DURANTE EL PROCESO, la sección 1 de EQUIPOS/INSTRUMENTOS/MATERIALES, o la sección de CONDICIONES AMBIENTALES del RMD vigente, indícalo en "seccionGeneral" ("precauciones" | "notas_importantes" | "equipos_instrumentos" | "condiciones_ambientales") para que el sistema pueda llevar al analista directo a esa sección del PDF vigente. En cualquier otro caso usa "seccionGeneral": null.
 
 3. **Cero alucinación de contenido.** "textoEnVigente" y "textoEnBorrador" deben ser citas fieles de lo que dice cada documento (no una paráfrasis). Si un paso no existe en uno de los dos documentos, ese campo debe ir en null.
 
@@ -337,7 +337,7 @@ const responseSchemaBorrador = {
           pasoIdBorrador: { type: SchemaType.STRING, nullable: true },
           seccionGeneral: {
             type: SchemaType.STRING,
-            enum: ["precauciones", "notas_importantes", "equipos_instrumentos"],
+            enum: ["precauciones", "notas_importantes", "equipos_instrumentos", "condiciones_ambientales"],
             nullable: true,
           },
           ubicacionReferencia: { type: SchemaType.STRING },

@@ -2,17 +2,27 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { calcularEscala, calcularRectangulosResaltado } from "@/lib/resaltadoPdf";
+import {
+  calcularEscala,
+  calcularRectangulosResaltado,
+  calcularRectangulosResaltadoSeccion,
+} from "@/lib/resaltadoPdf";
+import type { SeccionGeneral } from "@/types/rmd";
 
 export interface SaltoPdf {
   pagina: number;
-  // Ausente = navegación a "solo página" (ej. una sección general como
-  // Precauciones, sin un patrón de línea puntual que buscar): se hace scroll
-  // a la página y se remarca su borde, sin intentar resaltar una línea.
+  // Un paso numérico del procedimiento — resalta esa línea/rango exacto.
   pasoId?: string;
-  // Cita textual de lo que el análisis marcó como observado dentro del paso.
-  // Si se encuentra en el PDF, ese fragmento exacto se resalta fuerte y el
-  // resto del paso queda en un amarillo suave de contexto.
+  // O, si no hay pasoId, una sección general navegable (Precauciones, Notas
+  // Importantes, Equipos/Instrumentos/Materiales, Condiciones Ambientales):
+  // resalta el bloque completo de esa sección igual que un paso, en vez de
+  // solo remarcar el borde de la página entera. Si ninguno de los dos viene
+  // (ni pasoId ni seccionGeneral), se hace scroll a la página y se remarca
+  // su borde nada más — fallback para destinos sin texto localizable.
+  seccionGeneral?: SeccionGeneral | null;
+  // Cita textual de lo que el análisis marcó como observado dentro del paso
+  // o la sección. Si se encuentra en el PDF, ese fragmento exacto se resalta
+  // fuerte y el resto del paso/sección queda en un amarillo suave de contexto.
   textoBuscado?: string | null;
   token: number; // fuerza reaccionar aunque se pida el mismo paso dos veces seguidas
 }
@@ -274,10 +284,11 @@ export function VisorPdf({ pdfUrl, salto, onBlobInvalido }: Props) {
       if (!overlay || !canvas) return;
       overlay.innerHTML = "";
 
-      if (!salto.pasoId) {
-        // Navegación a "solo página" (ej. una sección general sin patrón de
-        // línea puntual, como Precauciones): ya hicimos scroll arriba, solo
-        // falta remarcar el borde para que el usuario sepa dónde mirar.
+      if (!salto.pasoId && !salto.seccionGeneral) {
+        // Navegación a "solo página" sin ningún destino localizable dentro
+        // de ella (ni paso ni sección general reconocida): ya hicimos scroll
+        // arriba, solo falta remarcar el borde para que el usuario sepa
+        // dónde mirar.
         paginaEl?.classList.add("pagina-flash");
         setTimeout(() => paginaEl?.classList.remove("pagina-flash"), 1900);
         return;
@@ -294,13 +305,26 @@ export function VisorPdf({ pdfUrl, salto, onBlobInvalido }: Props) {
 
         const contenido = await page.getTextContent();
         if (cancelado) return;
-        const rects = calcularRectangulosResaltado(
-          contenido as any,
-          viewport.transform,
-          escala,
-          salto.pasoId,
-          salto.textoBuscado ?? undefined
-        );
+        // Un paso numérico resalta su rango exacto; una sección general
+        // (Precauciones, Notas Importantes, Equipos/Instrumentos/Materiales,
+        // Condiciones Ambientales) resalta el bloque completo de esa
+        // sección — antes esto último sólo hacía scroll + flash de borde,
+        // sin marcar ningún texto puntual.
+        const rects = salto.pasoId
+          ? calcularRectangulosResaltado(
+              contenido as any,
+              viewport.transform,
+              escala,
+              salto.pasoId,
+              salto.textoBuscado ?? undefined
+            )
+          : calcularRectangulosResaltadoSeccion(
+              contenido as any,
+              viewport.transform,
+              escala,
+              salto.seccionGeneral!,
+              salto.textoBuscado ?? undefined
+            );
 
         if (rects.length === 0) {
           // No se pudo localizar la línea exacta (común en borradores con
