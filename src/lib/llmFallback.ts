@@ -20,7 +20,12 @@ import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
  * no solo el caso puntual de "se acabó la cuota".
  */
 
-const GROQ_MODEL = "llama-3.3-70b-versatile";
+// Groq rota su catálogo y da de baja modelos sin aviso: "llama-3.3-70b-versatile"
+// funcionaba y dejó de existir (HTTP 404 model_not_found), lo que dejó el
+// respaldo de última instancia inservible sin que nada lo señalara. Queda
+// configurable por entorno para poder cambiarlo sin tocar código ni
+// redesplegar. Modelos vigentes se listan en GET /openai/v1/models.
+const GROQ_MODEL = process.env.GROQ_MODEL ?? "openai/gpt-oss-120b";
 
 function esErrorTransitorio(err: any): boolean {
   const status = err?.status ?? err?.response?.status;
@@ -95,6 +100,18 @@ export interface GenerarJSONArgs {
   textoContenido: string;
   pdfsAdjuntos?: PdfAdjunto[];
   schema: any;
+  /**
+   * true = la operación DEPENDE de leer visualmente el PDF adjunto, así que
+   * Groq queda excluido de la cadena de respaldo.
+   *
+   * No es una optimización: Groq no ve los PDF, pero igual responde un JSON
+   * válido según el schema — con los arreglos vacíos. En una transcripción por
+   * OCR eso se veía como un éxito con "0 insumos, 0 equipos, 33 de 93 pasos"
+   * en vez de un error, que es la peor falla posible en un documento de
+   * calidad regulada. Ante la duda, mejor fallar fuerte que devolver un
+   * documento a medias sin avisar.
+   */
+  requiereVisionDocumento?: boolean;
 }
 
 async function generarConGemini(apiKey: string, args: GenerarJSONArgs): Promise<any> {
@@ -154,7 +171,13 @@ No tenés acceso visual a los PDF adjuntos — solo al texto ya extraído en la 
 
   if (!resp.ok) {
     const cuerpo = await resp.text().catch(() => "");
-    const err: any = new Error(`Groq respondió HTTP ${resp.status}: ${cuerpo.slice(0, 300)}`);
+    const pista =
+      resp.status === 404 && cuerpo.includes("model_not_found")
+        ? ` — el modelo "${GROQ_MODEL}" ya no existe en Groq: definí GROQ_MODEL con uno vigente (GET https://api.groq.com/openai/v1/models).`
+        : "";
+    const err: any = new Error(
+      `Groq respondió HTTP ${resp.status}: ${cuerpo.slice(0, 300)}${pista}`
+    );
     err.status = resp.status;
     throw err;
   }
@@ -196,12 +219,17 @@ export async function generarJSONConFallback(args: GenerarJSONArgs): Promise<any
     }
   }
 
-  if (claveGroq) {
+  if (claveGroq && !args.requiereVisionDocumento) {
     try {
       return await generarConGroq(claveGroq, args);
     } catch (err) {
       errores.push(`Groq (última instancia): ${mensajeError(err)}`);
     }
+  } else if (claveGroq) {
+    errores.push(
+      "Groq (última instancia): omitido a propósito — esta operación necesita leer el PDF " +
+        "visualmente y Groq no lo ve; responder con él daría un resultado vacío disfrazado de éxito."
+    );
   }
 
   if (errores.length === 0) {

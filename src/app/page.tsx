@@ -48,6 +48,10 @@ type VistaResultado =
       // de volver a subir el archivo.
       pdfBorradorUrl?: string;
       rmdBorrador?: RMDExtraido;
+      // Documentos escaneados: la estructura no salió del texto embebido sino
+      // de leer el PDF con IA. El analista tiene que saberlo para verificar
+      // las cifras contra el original.
+      avisosExtraccion?: string[];
     };
 
 /**
@@ -253,7 +257,10 @@ export default function Home() {
         input.variante === "corregido" ? "el RMD corregido" : "el RMD vigente";
       setErrorVerificacion(null);
       try {
-        setVista({ tipo: "cargando", mensaje: `Extrayendo ${etiquetaPrimerDocumento}…` });
+        setVista({
+          tipo: "cargando",
+          mensaje: `Extrayendo ${etiquetaPrimerDocumento}… (si es un escaneo, hay que leerlo con IA y puede tardar unos minutos)`,
+        });
 
         const formDataVigente = new FormData();
         formDataVigente.append("file", input.rmdVigenteFile);
@@ -265,8 +272,26 @@ export default function Home() {
           const err = await extractVigenteRes.json();
           throw new Error(err.error ?? `No se pudo extraer el PDF de ${etiquetaPrimerDocumento}.`);
         }
-        const { estructura: estructuraVigente, pdfBase64: pdfVigenteBase64 } =
-          await extractVigenteRes.json();
+        const datosVigente = await extractVigenteRes.json();
+        const estructuraVigente = datosVigente.estructura;
+        const pdfVigenteBase64 = datosVigente.pdfBase64;
+
+        // Documentos escaneados: la estructura se reconstruyó leyendo el PDF
+        // con IA, así que conviene que el analista lo sepa (y sepa cuándo NO
+        // se pudo). Ver /api/extract-pdf y lib/ocrExtractor.ts.
+        const avisos: string[] = [];
+        const registrarAviso = (datos: any, etiqueta: string) => {
+          if (datos.origenExtraccion === "ocr") {
+            avisos.push(
+              `${etiqueta}: es un documento escaneado, así que su estructura se reconstruyó ` +
+                `leyéndolo con IA (${datos.pasosDetectados ?? 0} pasos transcriptos). Verificá ` +
+                `los datos numéricos contra el PDF antes de darlos por buenos.`
+            );
+          } else if (datos.origenExtraccion === "ocr_fallido") {
+            avisos.push(`${etiqueta}: ${datos.avisoExtraccion}`);
+          }
+        };
+        registrarAviso(datosVigente, etiquetaPrimerDocumento);
 
         let estructuraBorrador: any = null;
         let pdfBorradorBase64: string | undefined;
@@ -286,6 +311,7 @@ export default function Home() {
           const data = await extractBorradorRes.json();
           estructuraBorrador = data.estructura;
           pdfBorradorBase64 = data.pdfBase64;
+          registrarAviso(data, "El borrador de Producción");
         }
 
         const esCorregido = input.variante === "corregido";
@@ -331,6 +357,7 @@ export default function Home() {
             ? URL.createObjectURL(input.rmdBorradorFile)
             : undefined,
           rmdBorrador: estructuraBorrador ?? undefined,
+          avisosExtraccion: avisos.length > 0 ? avisos : undefined,
         });
       } catch (err: any) {
         setVista({ tipo: "error", mensaje: err.message ?? "Ocurrió un error inesperado." });
@@ -794,6 +821,15 @@ export default function Home() {
             </button>
           ))}
         </div>
+        {vr.tipo === "resultado-borrador" && vr.avisosExtraccion && (
+          <div className="inset-seguro-x animate-fade-in-up border-b border-severidad-alta/20 bg-severidad-altaTint px-4 py-2 sm:px-5">
+            {vr.avisosExtraccion.map((aviso, i) => (
+              <p key={i} className="text-[12px] leading-relaxed text-severidad-alta">
+                ⚠ {aviso}
+              </p>
+            ))}
+          </div>
+        )}
         {errorVerificacion && (
           <div className="flex animate-fade-in-up items-center justify-between gap-3 border-b border-severidad-critica/20 bg-severidad-criticaTint px-5 py-2">
             <p className="text-[12.5px] text-severidad-critica">{errorVerificacion}</p>

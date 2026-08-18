@@ -26,6 +26,9 @@ import type {
 
 export interface TextoPDFExtraido {
   texto: string;
+  /** Total de páginas del PDF. Lo necesita el OCR para repartir la
+   *  transcripción en llamadas paralelas por rango de páginas. */
+  numPaginas: number;
   // paginaPorLinea[i] = página (1-indexada) de la línea i de texto.split("\n").
   // Permite ubicar en qué página del PDF original quedó cada paso parseado,
   // para poder saltar directo a esa página en el visor (ver PanelRMDVigente).
@@ -49,7 +52,7 @@ export async function extraerTextoPDF(pdfBuffer: ArrayBuffer): Promise<TextoPDFE
     }
   });
 
-  return { texto: todasLasLineas.join("\n"), paginaPorLinea };
+  return { texto: todasLasLineas.join("\n"), paginaPorLinea, numPaginas: text.length };
 }
 
 // ---------- Parseo heurístico basado en los patrones observados ----------
