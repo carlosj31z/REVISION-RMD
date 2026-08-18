@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef, forwardRef } from "react";
 import { FormularioCarga } from "@/components/FormularioCarga";
+import { GeneradorNomenclatura } from "@/components/GeneradorNomenclatura";
 import { FormularioComparacionBorrador } from "@/components/FormularioComparacionBorrador";
 import { PanelRMDVigente } from "@/components/PanelRMDVigente";
 import { PanelDiscrepancias } from "@/components/PanelDiscrepancias";
@@ -725,7 +726,12 @@ export default function Home() {
         )}
         <div className="flex-1 overflow-y-auto">
           {modo === "control_cambios" ? (
-            <FormularioCarga onIniciarRevision={iniciarRevision} cargando={false} />
+            <>
+              <div className="pt-7 sm:pt-10">
+                <GeneradorNomenclatura />
+              </div>
+              <FormularioCarga onIniciarRevision={iniciarRevision} cargando={false} />
+            </>
           ) : modo === "borrador" ? (
             <FormularioComparacionBorrador
               onIniciarComparacion={iniciarComparacionBorrador}
