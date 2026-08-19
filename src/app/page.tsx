@@ -11,6 +11,8 @@ import { ModalVisorBorrador } from "@/components/ModalVisorBorrador";
 import { PanelReglas } from "@/components/PanelReglas";
 import { PanelDocumentosObsoletos } from "@/components/PanelDocumentosObsoletos";
 import { ToggleTema } from "@/components/ui/ToggleTema";
+import { EstadoIA } from "@/components/EstadoIA";
+import { leerRespuestaApi } from "@/lib/leerRespuestaApi";
 import type { SaltoPdf } from "@/components/VisorPdf";
 import type {
   RMDExtraido,
@@ -248,10 +250,10 @@ export default function Home() {
         formData.append("file", input.rmdFile);
         const extractRes = await fetch("/api/extract-pdf", { method: "POST", body: formData });
         if (!extractRes.ok) {
-          const err = await extractRes.json();
+          const err = await leerRespuestaApi(extractRes);
           throw new Error(err.error ?? "No se pudo extraer el PDF del RMD vigente.");
         }
-        const { estructura, pdfBase64 } = await extractRes.json();
+        const { estructura, pdfBase64 } = await leerRespuestaApi(extractRes);
 
         setVista({ tipo: "cargando", mensaje: "Comparando contra el Control de Cambio…" });
 
@@ -274,11 +276,11 @@ export default function Home() {
         });
 
         if (!revisionRes.ok) {
-          const err = await revisionRes.json();
+          const err = await leerRespuestaApi(revisionRes);
           throw new Error(err.error ?? "No se pudo completar la comparación.");
         }
 
-        const data = await revisionRes.json();
+        const data = await leerRespuestaApi(revisionRes);
 
         abrirNuevaSesion({
           tipo: "resultado",
@@ -324,10 +326,10 @@ export default function Home() {
           body: formDataVigente,
         });
         if (!extractVigenteRes.ok) {
-          const err = await extractVigenteRes.json();
+          const err = await leerRespuestaApi(extractVigenteRes);
           throw new Error(err.error ?? `No se pudo extraer el PDF de ${etiquetaPrimerDocumento}.`);
         }
-        const datosVigente = await extractVigenteRes.json();
+        const datosVigente = await leerRespuestaApi(extractVigenteRes);
         const estructuraVigente = datosVigente.estructura;
         const pdfVigenteBase64 = datosVigente.pdfBase64;
 
@@ -360,10 +362,10 @@ export default function Home() {
             body: formDataBorrador,
           });
           if (!extractBorradorRes.ok) {
-            const err = await extractBorradorRes.json();
+            const err = await leerRespuestaApi(extractBorradorRes);
             throw new Error(err.error ?? "No se pudo extraer el PDF del borrador.");
           }
-          const data = await extractBorradorRes.json();
+          const data = await leerRespuestaApi(extractBorradorRes);
           estructuraBorrador = data.estructura;
           pdfBorradorBase64 = data.pdfBase64;
           registrarAviso(data, "El borrador de Producción");
@@ -394,11 +396,11 @@ export default function Home() {
         });
 
         if (!revisionRes.ok) {
-          const err = await revisionRes.json();
+          const err = await leerRespuestaApi(revisionRes);
           throw new Error(err.error ?? "No se pudo completar la comparación.");
         }
 
-        const data = await revisionRes.json();
+        const data = await leerRespuestaApi(revisionRes);
 
         abrirNuevaSesion({
           tipo: "resultado-borrador",
@@ -462,10 +464,10 @@ export default function Home() {
         formData.append("file", file);
         const extractRes = await fetch("/api/extract-pdf", { method: "POST", body: formData });
         if (!extractRes.ok) {
-          const err = await extractRes.json();
+          const err = await leerRespuestaApi(extractRes);
           throw new Error(err.error ?? "No se pudo extraer el PDF corregido.");
         }
-        const { estructura, pdfBase64 } = await extractRes.json();
+        const { estructura, pdfBase64 } = await leerRespuestaApi(extractRes);
 
         // Reconstruir la misma "clave" que usan los paneles para cada
         // tarjeta (pasoId real, o un id sintético para los que no tienen uno
@@ -510,10 +512,10 @@ export default function Home() {
           }),
         });
         if (!verifRes.ok) {
-          const err = await verifRes.json();
+          const err = await leerRespuestaApi(verifRes);
           throw new Error(err.error ?? "No se pudo verificar la corrección.");
         }
-        const { resultado: resultadoVerificacion } = await verifRes.json();
+        const { resultado: resultadoVerificacion } = await leerRespuestaApi(verifRes);
 
         const nuevaVerificacion: Record<string, { resuelto: boolean; justificacion: string }> = {};
         for (const v of resultadoVerificacion.verificaciones as {
@@ -724,6 +726,7 @@ export default function Home() {
               onClick={() => setVista({ tipo: "documentosObsoletos" })}
               label="Documentos obsoletos"
             />
+            <EstadoIA />
             <ToggleTema />
           </div>
         </div>
@@ -871,6 +874,7 @@ export default function Home() {
             >
               — Dejar abierta
             </button>
+            <EstadoIA />
             <ToggleTema />
           </div>
         </div>

@@ -9,6 +9,7 @@ import {
   type GradoImpacto,
   type NomenclaturaControlCambio,
 } from "@/lib/nomenclaturaControlCambio";
+import { leerRespuestaApi } from "@/lib/leerRespuestaApi";
 
 const OPCIONES_6M = Object.keys(ETIQUETA_6M) as Categoria6M[];
 const OPCIONES_GRADO = Object.keys(ETIQUETA_GRADO) as GradoImpacto[];
@@ -78,8 +79,8 @@ export function GeneradorNomenclatura() {
         method: "POST",
         body: formData,
       });
-      if (!res.ok) throw new Error((await res.json()).error ?? "No se pudo generar la nomenclatura.");
-      const { nomenclatura } = (await res.json()) as { nomenclatura: NomenclaturaControlCambio };
+      if (!res.ok) throw new Error((await leerRespuestaApi(res)).error ?? "No se pudo generar la nomenclatura.");
+      const { nomenclatura } = (await leerRespuestaApi(res)) as { nomenclatura: NomenclaturaControlCambio };
 
       setResultado(nomenclatura);
       setCodigo(nomenclatura.codigo);

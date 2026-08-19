@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import type { ReglaHomologacion, SeccionCodigo, EtapaCodigo } from "@/types/rmd";
 import type { AnalisisRegla } from "@/lib/analizarRegla";
+import { leerRespuestaApi } from "@/lib/leerRespuestaApi";
 
 const SECCIONES = [
   "SOLIDOS",
@@ -64,8 +65,8 @@ export function PanelReglas({ onVolver }: Props) {
     setError(null);
     try {
       const res = await fetch("/api/reglas");
-      if (!res.ok) throw new Error((await res.json()).error ?? "No se pudieron cargar las reglas.");
-      const data = await res.json();
+      if (!res.ok) throw new Error((await leerRespuestaApi(res)).error ?? "No se pudieron cargar las reglas.");
+      const data = await leerRespuestaApi(res);
       setReglas(data.reglas);
     } catch (err: any) {
       setError(err.message ?? "Ocurrió un error inesperado.");
@@ -107,8 +108,8 @@ export function PanelReglas({ onVolver }: Props) {
             historial: nuevoHistorial,
           }),
         });
-        if (!res.ok) throw new Error((await res.json()).error ?? "No se pudo analizar la regla.");
-        const data = await res.json();
+        if (!res.ok) throw new Error((await leerRespuestaApi(res)).error ?? "No se pudo analizar la regla.");
+        const data = await leerRespuestaApi(res);
         setAnalisis(data.analisis);
         setHistorial(nuevoHistorial);
         setComentario("");
@@ -135,7 +136,7 @@ export function PanelReglas({ onVolver }: Props) {
           etapaCodigo: etapa === "TODAS" ? null : (etapa as EtapaCodigo),
         }),
       });
-      if (!res.ok) throw new Error((await res.json()).error ?? "No se pudo crear la regla.");
+      if (!res.ok) throw new Error((await leerRespuestaApi(res)).error ?? "No se pudo crear la regla.");
       limpiarFormulario();
       await cargarReglas();
     } catch (err: any) {

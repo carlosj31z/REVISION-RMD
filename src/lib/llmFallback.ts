@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+import { getSupabaseServerClient } from "./supabaseClient";
 
 /**
  * Orquestación de proveedores de IA con respaldo automático.
@@ -53,6 +54,32 @@ async function conReintentos<T>(fn: () => Promise<T>, intentos = 5): Promise<T> 
     }
   }
   throw new Error("unreachable");
+}
+
+/**
+ * Registra cada intento (éxito o fallo) contra un proveedor, para poder
+ * mostrarle al usuario cuánto lleva usado hoy — ver /api/estado-ia. Google
+ * no expone la cuota restante de una API key por ningún endpoint; enterarse
+ * de que se agotó sólo pasa AL RECIBIR el 429. Como esta app es la única
+ * consumidora de estas claves, contar nosotros mismos cada llamada es la
+ * única forma de anticiparlo.
+ *
+ * A propósito "fire-and-forget": nunca se espera (no lleva `await` en quien
+ * la llama) ni puede tirar abajo la llamada real a la IA. Si la tabla
+ * todavía no existe (falta correr la migración) o Supabase no está
+ * configurado, falla en silencio — este registro es un extra de
+ * diagnóstico, no una dependencia del flujo principal.
+ */
+function registrarUso(proveedor: string, operacion: string, exito: boolean): void {
+  try {
+    getSupabaseServerClient()
+      .from("uso_ia")
+      .insert({ proveedor, operacion, exito })
+      .then(() => {}, () => {});
+  } catch {
+    // getSupabaseServerClient() tira si faltan las env vars — mismo criterio:
+    // no bloquear ni ensuciar el error real de la IA por esto.
+  }
 }
 
 function mensajeError(err: any): string {
@@ -226,6 +253,14 @@ function clavesGeminiConfiguradas(): { etiqueta: string; clave: string }[] {
     .filter((c) => c.clave);
 }
 
+/** Usado por /api/estado-ia para saber qué proveedores mostrar aunque no
+ *  hayan tenido ninguna llamada hoy todavía (distinto de "no configurado"). */
+export function listarProveedoresConfigurados(): string[] {
+  const etiquetas = clavesGeminiConfiguradas().map((c) => c.etiqueta);
+  if (process.env.GROQ_API_KEY) etiquetas.push("GROQ_API_KEY");
+  return etiquetas;
+}
+
 export async function generarJSONConFallback(args: GenerarJSONArgs): Promise<any> {
   const errores: string[] = [];
 
@@ -234,16 +269,22 @@ export async function generarJSONConFallback(args: GenerarJSONArgs): Promise<any
 
   for (const { etiqueta, clave } of clavesGemini) {
     try {
-      return await generarConGemini(clave, args);
+      const resultado = await generarConGemini(clave, args);
+      registrarUso(etiqueta, args.nombreOperacion, true);
+      return resultado;
     } catch (err) {
+      registrarUso(etiqueta, args.nombreOperacion, false);
       errores.push(`Gemini (${etiqueta}): ${mensajeError(err)}`);
     }
   }
 
   if (claveGroq && !args.requiereVisionDocumento) {
     try {
-      return await generarConGroq(claveGroq, args);
+      const resultado = await generarConGroq(claveGroq, args);
+      registrarUso("GROQ_API_KEY", args.nombreOperacion, true);
+      return resultado;
     } catch (err) {
+      registrarUso("GROQ_API_KEY", args.nombreOperacion, false);
       errores.push(`Groq (última instancia): ${mensajeError(err)}`);
     }
   } else if (claveGroq) {

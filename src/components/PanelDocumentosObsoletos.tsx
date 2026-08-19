@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import type { DocumentoObsoleto } from "@/types/rmd";
+import { leerRespuestaApi } from "@/lib/leerRespuestaApi";
 
 interface Props {
   onVolver: () => void;
@@ -22,8 +23,8 @@ export function PanelDocumentosObsoletos({ onVolver }: Props) {
     try {
       const res = await fetch("/api/documentos-obsoletos");
       if (!res.ok)
-        throw new Error((await res.json()).error ?? "No se pudieron cargar los documentos.");
-      const data = await res.json();
+        throw new Error((await leerRespuestaApi(res)).error ?? "No se pudieron cargar los documentos.");
+      const data = await leerRespuestaApi(res);
       setDocumentos(data.documentos);
     } catch (err: any) {
       setError(err.message ?? "Ocurrió un error inesperado.");
@@ -48,7 +49,7 @@ export function PanelDocumentosObsoletos({ onVolver }: Props) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ codigo: codigo.trim(), motivo: motivo.trim() || undefined }),
         });
-        if (!res.ok) throw new Error((await res.json()).error ?? "No se pudo registrar el documento.");
+        if (!res.ok) throw new Error((await leerRespuestaApi(res)).error ?? "No se pudo registrar el documento.");
         setCodigo("");
         setMotivo("");
         await cargarDocumentos();
