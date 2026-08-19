@@ -37,6 +37,18 @@ function esGemini(etiqueta: string): boolean {
   return etiqueta.startsWith("GEMINI_API_KEY");
 }
 
+// El logo real de Gemini (una "chispa" de 4 puntas). Se dibuja en
+// currentColor en vez del degradado azul/rojo/amarillo de Google para que
+// siga el mismo estilo monocromo del resto de los íconos de la app (ver
+// IconoSol/IconoLuna en ToggleTema.tsx) y respete el tema claro/oscuro.
+function IconoGemini() {
+  return (
+    <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">
+      <path d="M12 0c0 6.6-5.4 12-12 12 6.6 0 12 5.4 12 12 0-6.6 5.4-12 12-12-6.6 0-12-5.4-12-12Z" />
+    </svg>
+  );
+}
+
 export function EstadoIA() {
   const [abierto, setAbierto] = useState(false);
   const [cargando, setCargando] = useState(false);
@@ -99,9 +111,10 @@ export function EstadoIA() {
         ref={botonRef}
         onClick={alternar}
         title="Cuánto se usó hoy de cada proveedor de IA"
-        className="rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-muted transition-all duration-150 ease-spring hover:bg-surface hover:text-system hover:shadow-soft active:scale-95"
+        className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-muted transition-all duration-150 ease-spring hover:bg-surface hover:text-system hover:shadow-soft active:scale-95"
       >
-        📊 Estado IA
+        <IconoGemini />
+        Estado IA
       </button>
 
       {abierto && posicion && (
