@@ -38,6 +38,16 @@ interface Props {
    * componente no guarda el File, sólo detecta el síntoma.
    */
   onBlobInvalido?: () => void;
+  /**
+   * El File original, sólo para el enlace "Abrir en pestaña nueva". Ese
+   * enlace abre una pestaña del navegador completamente aparte, con su
+   * propio visor de PDF nativo — nuestra lógica de recuperación de arriba
+   * no puede ayudarla si pdfUrl ya está invalidada, porque no corre dentro
+   * de este componente. En vez de arriesgarse a heredar una URL muerta, se
+   * genera una blob: URL nueva a partir del File en el momento del clic
+   * (siempre viva, sin depender del estado de pdfUrl).
+   */
+  archivo?: File;
 }
 
 /**
@@ -62,7 +72,7 @@ function esBlobInvalidado(err: any): boolean {
  * el analista se desplaza libremente, y un clic en una diferencia hace
  * scroll automático hasta la página/línea correspondiente.
  */
-export function VisorPdf({ pdfUrl, salto, onBlobInvalido }: Props) {
+export function VisorPdf({ pdfUrl, salto, onBlobInvalido, archivo }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const paginaRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const canvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map());
@@ -410,11 +420,23 @@ export function VisorPdf({ pdfUrl, salto, onBlobInvalido }: Props) {
     };
   }, [salto, pdfDoc, anchoContenedor, paginasRenderizadas]);
 
+  const abrirEnPestanaNueva = (e: React.MouseEvent) => {
+    if (!archivo) return; // sin File: queda el href de siempre como fallback
+    e.preventDefault();
+    const urlFresca = URL.createObjectURL(archivo);
+    window.open(urlFresca, "_blank", "noopener,noreferrer");
+    // No se revoca de inmediato: la pestaña nueva recién está empezando a
+    // leerla. Se le da margen de sobra para terminar de cargar el PDF antes
+    // de liberar el blob.
+    setTimeout(() => URL.revokeObjectURL(urlFresca), 60_000);
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
       <div className="material-chrome-white z-10 flex shrink-0 items-center justify-end border-b border-line/70 px-3 py-1.5 shadow-soft">
         <a
           href={pdfUrl}
+          onClick={abrirEnPestanaNueva}
           target="_blank"
           rel="noopener noreferrer"
           className="rounded px-1.5 py-0.5 text-[11px] font-medium text-system transition-all duration-150 ease-spring hover:bg-system-tint active:scale-95"

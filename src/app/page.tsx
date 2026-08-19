@@ -925,6 +925,7 @@ export default function Home() {
               pdfUrl={vr.pdfUrl}
               salto={saltoPdf}
               onBlobInvalido={() => recuperarPdfVigenteInvalido(sesionActiva.id)}
+              archivo={vr.archivoVigente}
             />
           </div>
           <div className={vistaMovil === "observaciones" ? "min-h-0" : "hidden min-h-0 lg:block"}>
@@ -963,6 +964,7 @@ export default function Home() {
             salto={modalBorrador}
             onClose={() => setModalBorrador(null)}
             onBlobInvalido={() => recuperarPdfBorradorInvalido(sesionActiva.id)}
+            archivo={vr.archivoBorrador}
           />
         )}
       </div>
