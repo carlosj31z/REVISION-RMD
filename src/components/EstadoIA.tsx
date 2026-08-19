@@ -68,7 +68,7 @@ export function EstadoIA() {
     setCargando(true);
     setError(null);
     try {
-      const res = await fetch("/api/estado-ia");
+      const res = await fetch("/api/estado-ia", { cache: "no-store" });
       const data = await leerRespuestaApi(res);
       setEstado(data);
     } catch (err: any) {

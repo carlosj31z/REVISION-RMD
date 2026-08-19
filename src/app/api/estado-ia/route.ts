@@ -12,6 +12,18 @@ export const runtime = "nodejs";
 // reiniciar) siguió dando 0 hasta agregar esta línea.
 export const dynamic = "force-dynamic";
 
+// dynamic="force-dynamic" evita que Next.js reuse una respuesta vieja en el
+// SERVIDOR, pero no le dice al navegador (ni a un CDN delante, como el de
+// Vercel) que no debe guardar esta respuesta — sin un Cache-Control
+// explícito, un GET sin headers puede quedar cacheado ahí igual, y el
+// contador se ve pegado en un valor viejo por más que el servidor sí esté
+// calculando el número correcto en cada pedido.
+function sinCache(body: unknown) {
+  return NextResponse.json(body, {
+    headers: { "Cache-Control": "no-store, no-cache, must-revalidate" },
+  });
+}
+
 /**
  * GET /api/estado-ia
  * Cuenta cuántas llamadas se le hicieron hoy a cada proveedor de IA
@@ -30,7 +42,7 @@ export async function GET() {
   const proveedoresConfigurados = listarProveedoresConfigurados();
 
   if (proveedoresConfigurados.length === 0) {
-    return NextResponse.json({
+    return sinCache({
       disponible: false,
       motivo: "No hay ninguna clave de IA configurada.",
       proveedores: [],
@@ -44,7 +56,7 @@ export async function GET() {
     // Supabase no configurado: no es un error de la app, es un despliegue sin
     // esas env vars. El resto de la app también dependería de esto, pero acá
     // conviene degradar con un mensaje claro en vez de un 500.
-    return NextResponse.json({
+    return sinCache({
       disponible: false,
       motivo: "Supabase no está configurado, así que no se puede contar el uso.",
       proveedores: [],
@@ -62,7 +74,7 @@ export async function GET() {
   if (error) {
     // Típicamente: la tabla uso_ia todavía no existe porque no se corrió la
     // migración 0006_uso_ia.sql. Se avisa en vez de romper la página.
-    return NextResponse.json({
+    return sinCache({
       disponible: false,
       motivo: `No se pudo leer el uso registrado: ${error.message}`,
       proveedores: [],
@@ -85,7 +97,7 @@ export async function GET() {
     return { etiqueta, llamadas: c.llamadas, exitosas: c.exitosas, fallidas: c.llamadas - c.exitosas };
   });
 
-  return NextResponse.json({
+  return sinCache({
     disponible: true,
     desde: inicioDeHoyUTC.toISOString(),
     actualizado: new Date().toISOString(),
