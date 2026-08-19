@@ -3,6 +3,14 @@ import { getSupabaseServerClient } from "@/lib/supabaseClient";
 import { listarProveedoresConfigurados } from "@/lib/llmFallback";
 
 export const runtime = "nodejs";
+// Sin esto, Next.js cachea la respuesta de este GET la primera vez que se
+// pide (Full Route Cache: no lee cookies/headers/searchParams, así que
+// calificaba para cachearse) y sigue sirviendo esa foto vieja sin volver a
+// consultar Supabase — el conteo se quedaba pegado en 0 aunque ya hubiera
+// llamadas registradas. Confirmado en vivo: el primer pedido dio 0, se
+// insertó una fila real, y el segundo pedido (mismo proceso de dev, sin
+// reiniciar) siguió dando 0 hasta agregar esta línea.
+export const dynamic = "force-dynamic";
 
 /**
  * GET /api/estado-ia
