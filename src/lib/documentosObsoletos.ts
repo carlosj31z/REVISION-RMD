@@ -57,8 +57,14 @@ export function detectarDocumentosObsoletosReferenciados(
       descripcion: `El documento ${doc.codigo} (${doc.tipo}) está marcado como obsoleto${
         obsoleto.motivo ? `: ${obsoleto.motivo}` : ""
       }, pero sigue siendo referenciado${sufijo}.`,
-      pasosAfectados: [],
+      pasosAfectados: doc.pasoId ? [doc.pasoId] : [],
       severidad: "alta",
+      // Permite saltar y resaltar la cita exacta en el PDF (ver pasoId en
+      // DocumentoReferenciado); si no se encontró dentro de ningún paso,
+      // queda sin destino y la tarjeta no es clickeable.
+      pasoId: doc.pasoId ?? null,
+      seccionGeneral: null,
+      citaTextual: doc.codigo,
     });
   }
   return alertas;

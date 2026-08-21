@@ -98,8 +98,11 @@ export function detectarDocumentosVencidosReferenciados(
       descripcion: `El documento ${doc.codigo} (${vigente.titulo}) venció el ${formatearFecha(
         vigente.vigenteHasta
       )} según el maestro de documentos vigentes, pero sigue siendo referenciado${sufijo}.`,
-      pasosAfectados: [],
+      pasosAfectados: doc.pasoId ? [doc.pasoId] : [],
       severidad: "critica",
+      pasoId: doc.pasoId ?? null,
+      seccionGeneral: null,
+      citaTextual: doc.codigo,
     });
   }
   return alertas;

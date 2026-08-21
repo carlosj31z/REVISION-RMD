@@ -79,6 +79,11 @@ export interface DocumentoReferenciado {
   codigo: string; // código completo tal como aparece, ej. "ICBL-E200"
   tipo: "Instructivo" | "Procedimiento" | "Formato";
   area: string; // las 3 letras de área, ej. "CBL", "PRO", "ACO"
+  // Paso del procedimiento donde aparece esta cita (el primero que la
+  // contiene), o null si no se encontró dentro de ningún paso — permite
+  // saltar y resaltar la cita exacta en el PDF si el código termina
+  // marcado como obsoleto/vencido (ver detectarDocumentosObsoletosReferenciados).
+  pasoId?: string | null;
 }
 
 export interface RMDExtraido {
@@ -149,6 +154,18 @@ export interface AlertaCoherencia {
   descripcion: string;
   pasosAfectados: string[];
   severidad: "critica" | "alta" | "media" | "baja";
+  // Destino de navegación en el PDF para poder saltar y resaltar la alerta
+  // en amarillo, igual que un paso o una sección general (ver DestinoPdf) —
+  // sólo se completan para los tipos donde tiene sentido señalar un punto
+  // exacto (falla_redaccion, equipo_retirado_en_uso,
+  // equipo_sin_preparacion_registrada, documento_obsoleto_referenciado);
+  // en el resto quedan en null y la tarjeta no es clickeable.
+  pasoId?: string | null;
+  seccionGeneral?: SeccionGeneral | null;
+  // Cita textual EXACTA (tal como aparece en el RMD) del fragmento con el
+  // problema, para que el visor resalte esa línea puntual en vez de todo
+  // el paso/sección — mismo mecanismo que textoBuscado en DiscrepanciaDetectada.
+  citaTextual?: string | null;
 }
 
 export interface ResultadoRevisionIA {

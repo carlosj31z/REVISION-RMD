@@ -102,6 +102,7 @@ export function parsearEstructuraRMD(
     .map((l, i) => ({ texto: l.trim(), pagina: paginaPorLinea[i] }))
     .filter((l) => l.texto.length > 0);
   const lineas = lineasConPagina.map((l) => l.texto);
+  const procedimiento = extraerPasosProcedimiento(lineasConPagina);
 
   return {
     encabezado: extraerEncabezado(texto),
@@ -120,9 +121,9 @@ export function parsearEstructuraRMD(
       "4.-PROCEDIMIENTO",
       RE_INICIO_CONDICIONES_AMBIENTALES
     ),
-    procedimiento: extraerPasosProcedimiento(lineasConPagina),
+    procedimiento,
     especificacionesProducto: extraerEspecificaciones(texto),
-    documentosReferenciados: extraerDocumentosReferenciados(texto),
+    documentosReferenciados: extraerDocumentosReferenciados(texto, procedimiento),
     paginasSeccionesGenerales: extraerPaginasSeccionesGenerales(lineasConPagina),
   };
 }
@@ -150,16 +151,24 @@ function extraerPaginasSeccionesGenerales(
   return paginas;
 }
 
-function extraerDocumentosReferenciados(texto: string): DocumentoReferenciado[] {
+function extraerDocumentosReferenciados(
+  texto: string,
+  procedimiento: PasoProcedimiento[]
+): DocumentoReferenciado[] {
   const vistos = new Map<string, DocumentoReferenciado>();
   for (const m of texto.matchAll(RE_DOCUMENTO_REFERENCIADO)) {
     const [codigoCrudo, tipoLetra, area] = m;
     const codigo = codigoCrudo.toUpperCase();
     if (vistos.has(codigo)) continue;
+    // Primer paso cuyo texto contiene esta cita — permite saltar y resaltar
+    // la línea exacta en el PDF si el código termina marcado como obsoleto/
+    // vencido, en vez de sólo señalar "en algún lugar del documento".
+    const pasoQueLoCita = procedimiento.find((p) => p.texto.toUpperCase().includes(codigo));
     vistos.set(codigo, {
       codigo,
       tipo: TIPO_DOCUMENTO[tipoLetra.toUpperCase() as "I" | "P" | "F"],
       area: area.toUpperCase(),
+      pasoId: pasoQueLoCita?.id ?? null,
     });
   }
   return Array.from(vistos.values()).sort((a, b) => a.codigo.localeCompare(b.codigo));

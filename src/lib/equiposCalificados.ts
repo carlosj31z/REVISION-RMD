@@ -91,6 +91,12 @@ export function detectarEquiposNoCalificadosReferenciados(
       }"${sufijo}.`,
       pasosAfectados: [],
       severidad: "critica",
+      // El código sale de la tabla de la sección 1 (EQUIPOS/INSTRUMENTOS/
+      // MATERIALES), no de un paso puntual — salta y resalta ese código
+      // dentro de esa sección general.
+      pasoId: null,
+      seccionGeneral: "equipos_instrumentos",
+      citaTextual: codigo,
     });
   }
   return alertas;

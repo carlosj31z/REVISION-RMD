@@ -191,28 +191,44 @@ export function PanelDiferenciasBorrador({
             <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted">
               Alertas de coherencia
             </h3>
-            {resultado.alertasCoherencia.map((alerta, i) => (
-              <div
-                key={i}
-                className="animate-fade-in-up rounded-lg border border-line bg-surface px-3 py-2.5 transition-shadow duration-200 hover:shadow-soft"
-                style={{ animationDelay: `${Math.min(i, 6) * 30}ms` }}
-              >
-                <div className="mb-1 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5">
-                    <BadgeSeveridad severidad={alerta.severidad} />
-                    <span className="text-[11px] font-medium text-muted">
-                      {TIPO_ALERTA_LABEL[alerta.tipo]}
-                    </span>
+            {resultado.alertasCoherencia.map((alerta, i) => {
+              const esNavegable = !!(alerta.pasoId || alerta.seccionGeneral);
+              return (
+                <div
+                  key={i}
+                  onClick={
+                    esNavegable
+                      ? () =>
+                          onIrAPaso({
+                            pasoId: alerta.pasoId,
+                            seccionGeneral: alerta.seccionGeneral,
+                            textoBuscado: alerta.citaTextual,
+                          })
+                      : undefined
+                  }
+                  title={esNavegable ? "Ver en el PDF" : undefined}
+                  className={`animate-fade-in-up rounded-lg border border-line bg-surface px-3 py-2.5 transition-shadow duration-200 hover:shadow-soft ${
+                    esNavegable ? "cursor-pointer" : ""
+                  }`}
+                  style={{ animationDelay: `${Math.min(i, 6) * 30}ms` }}
+                >
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <BadgeSeveridad severidad={alerta.severidad} />
+                      <span className="text-[11px] font-medium text-muted">
+                        {TIPO_ALERTA_LABEL[alerta.tipo]}
+                      </span>
+                    </div>
+                    {alerta.pasosAfectados.length > 0 && (
+                      <span className="font-mono text-[11px] text-muted">
+                        {alerta.pasosAfectados.join(", ")}
+                      </span>
+                    )}
                   </div>
-                  {alerta.pasosAfectados.length > 0 && (
-                    <span className="font-mono text-[11px] text-muted">
-                      {alerta.pasosAfectados.join(", ")}
-                    </span>
-                  )}
+                  <p className="text-[13px] leading-snug text-ink/80">{alerta.descripcion}</p>
                 </div>
-                <p className="text-[13px] leading-snug text-ink/80">{alerta.descripcion}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 

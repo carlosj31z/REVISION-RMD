@@ -70,6 +70,8 @@ Comparar un RMD vigente (extraído de PDF) contra un Control de Cambio, No Confo
 
 15. **Fallas de redacción en el RMD vigente.** Además de las discrepancias contra el Control de Cambio, señalá errores de redacción genuinos que encuentres en el texto del procedimiento y del resto de las secciones: errores gramaticales, palabras mal escritas, frases incoherentes o ambiguas que dificulten entender la instrucción, palabras faltantes o repetidas, y puntuación que cambie el sentido de la instrucción. **EXCEPTUÁ explícitamente dos cosas — NUNCA las reportes:** (a) el uso de mayúsculas, porque el RMD se redacta convencionalmente todo en mayúsculas por norma, no es un error; (b) las tildes/acentos faltantes o mal puestos, porque estos documentos los omiten de forma habitual y no es objeto de esta verificación. Repórtalas como alertaCoherencia de tipo "falla_redaccion", severidad "baja" si es un error menor que no afecta la comprensión o "media" si genera ambigüedad real sobre qué hacer, con "pasosAfectados" incluyendo el pasoId (vacío si aplica a una sección general) y "descripcion" citando el fragmento exacto con el error y explicando en qué consiste la falla.
 
+16. **Destino de navegación en las alertas de coherencia.** Toda alertaCoherencia de tipo "falla_redaccion", "equipo_retirado_en_uso" o "equipo_sin_preparacion_registrada" debe indicar DÓNDE está el problema para que el sistema pueda saltar ahí y resaltarlo en amarillo sobre el PDF: completá "pasoId" con el paso exacto si corresponde a uno puntual, o "seccionGeneral" con "equipos_instrumentos" si el equipo en cuestión está listado en la sección 1 y no en un paso puntual (null en el otro campo en cada caso), y "citaTextual" con el fragmento EXACTO (cita fiel, no paráfrasis) que hay que resaltar — la palabra/frase con el error de redacción, o el código del equipo. Para cualquier otro tipo de alerta (o cuando de verdad no haya un punto localizable), dejá "pasoId", "seccionGeneral" y "citaTextual" en null.
+
 ## SOBRE LA SECCIÓN 6 (Verificación de Firmas)
 El documento RMD que recibes YA viene sin la sección 6 (Verificación de Firmas) — fue excluida deliberadamente porque no es objeto de esta revisión. No la menciones ni la eches en falta.
 
@@ -155,8 +157,21 @@ const responseSchema = {
           descripcion: { type: SchemaType.STRING },
           pasosAfectados: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
           severidad: { type: SchemaType.STRING, enum: ["critica", "alta", "media", "baja"] },
+          // Destino de navegación para saltar y resaltar la alerta en el
+          // PDF (ver punto sobre "falla_redaccion" y equipos en las reglas):
+          // pasoId si es un paso puntual, o seccionGeneral si corresponde a
+          // Precauciones/Notas Importantes/Equipos/Condiciones Ambientales.
+          // citaTextual es el fragmento EXACTO (cita fiel) a resaltar. Para
+          // cualquier alerta sin un punto localizable, los tres van en null.
+          pasoId: { type: SchemaType.STRING, nullable: true },
+          seccionGeneral: {
+            type: SchemaType.STRING,
+            enum: ["precauciones", "notas_importantes", "equipos_instrumentos", "condiciones_ambientales"],
+            nullable: true,
+          },
+          citaTextual: { type: SchemaType.STRING, nullable: true },
         },
-        required: ["tipo", "descripcion", "pasosAfectados", "severidad"],
+        required: ["tipo", "descripcion", "pasosAfectados", "severidad", "pasoId", "seccionGeneral", "citaTextual"],
       },
     },
     equiposRetiradosDetectados: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
@@ -324,6 +339,8 @@ En ambos casos indicá explícitamente en "justificacion" que la instrucción pr
 
 16. **Fallas de redacción.** En AMBOS documentos, señalá errores de redacción genuinos: errores gramaticales, palabras mal escritas, frases incoherentes o ambiguas que dificulten entender la instrucción, palabras faltantes o repetidas, y puntuación que cambie el sentido. **EXCEPTUÁ explícitamente dos cosas — NUNCA las reportes:** (a) el uso de mayúsculas (el RMD se redacta convencionalmente todo en mayúsculas, no es un error); (b) las tildes/acentos faltantes o mal puestos (estos documentos los omiten de forma habitual, no es objeto de esta verificación). Repórtalas como alertaCoherencia de tipo "falla_redaccion", severidad "baja" o "media" según afecten o no la comprensión, indicando en "descripcion" en cuál documento (vigente o borrador) está el error y citando el fragmento exacto.
 
+17. **Destino de navegación en las alertas de coherencia.** Toda alertaCoherencia de tipo "falla_redaccion", "equipo_retirado_en_uso" o "equipo_sin_preparacion_registrada" debe indicar DÓNDE está el problema (siempre sobre el RMD VIGENTE, aunque el error esté en el borrador, porque es el único documento con visor navegable) para que el sistema pueda saltar ahí y resaltarlo en amarillo: completá "pasoId" con el paso exacto del vigente si corresponde a uno puntual, o "seccionGeneral" con "equipos_instrumentos" si el equipo está listado en la sección 1 y no en un paso puntual (null en el otro campo en cada caso), y "citaTextual" con el fragmento EXACTO (cita fiel, no paráfrasis) que hay que resaltar. Si el problema está únicamente en el borrador y no tiene un punto equivalente localizable en el vigente, dejá los tres en null. Para cualquier otro tipo de alerta, también en null.
+
 ## SECCIÓN Y ETAPA
 Debes identificar a qué SECCIÓN de producto (SOLIDOS, ACONDICIONADO, CAPSULAS_BLANDAS, COSMETICOS, INY_HORMONALES, MENTHOLATUM, POLVOS_EFERVESCENTES, SEMISOLIDOS, SEMISOLIDOS_HORM, SOLIDOS_HORMONALES, SOLIDOS_4) y a qué ETAPA (FABRICACION, RECUBRIMIENTO, ENVASE, ACONDICIONADO) pertenece el RMD, basándote en el encabezado del documento vigente. Si no puedes determinarlo con confianza, usa "NO_IDENTIFICADA" y explica por qué en el resumen ejecutivo.`;
 
@@ -409,8 +426,21 @@ const responseSchemaBorrador = {
           descripcion: { type: SchemaType.STRING },
           pasosAfectados: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
           severidad: { type: SchemaType.STRING, enum: ["critica", "alta", "media", "baja"] },
+          // Destino de navegación para saltar y resaltar la alerta en el
+          // PDF (ver punto sobre "falla_redaccion" y equipos en las reglas):
+          // pasoId si es un paso puntual, o seccionGeneral si corresponde a
+          // Precauciones/Notas Importantes/Equipos/Condiciones Ambientales.
+          // citaTextual es el fragmento EXACTO (cita fiel) a resaltar. Para
+          // cualquier alerta sin un punto localizable, los tres van en null.
+          pasoId: { type: SchemaType.STRING, nullable: true },
+          seccionGeneral: {
+            type: SchemaType.STRING,
+            enum: ["precauciones", "notas_importantes", "equipos_instrumentos", "condiciones_ambientales"],
+            nullable: true,
+          },
+          citaTextual: { type: SchemaType.STRING, nullable: true },
         },
-        required: ["tipo", "descripcion", "pasosAfectados", "severidad"],
+        required: ["tipo", "descripcion", "pasosAfectados", "severidad", "pasoId", "seccionGeneral", "citaTextual"],
       },
     },
     equiposRetiradosDetectados: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
@@ -579,6 +609,7 @@ Sobre el RMD CORREGIDO, revisá también: citas cruzadas entre pasos que hayan q
 7. **JSON estricto**, un único objeto válido según el schema. Sin markdown ni texto fuera del JSON.
 8. **Idioma:** español, registro normativo BPM al citar.
 9. **"resumenEjecutivo"**: decí explícitamente cuántas indicaciones del borrador se verificaron, cuántas ya están incorporadas y cuántas siguen pendientes.
+10. **Destino de navegación en las alertas de coherencia.** Toda alertaCoherencia de tipo "falla_redaccion", "equipo_retirado_en_uso" o "equipo_sin_preparacion_registrada" debe indicar DÓNDE está el problema en el RMD CORREGIDO para que el sistema pueda saltar ahí y resaltarlo en amarillo: completá "pasoId" con el paso exacto si corresponde a uno puntual, o "seccionGeneral" con "equipos_instrumentos" si el equipo está listado en la sección 1 y no en un paso puntual (null en el otro campo en cada caso), y "citaTextual" con el fragmento EXACTO (cita fiel, no paráfrasis) a resaltar. Para cualquier otro tipo de alerta, los tres van en null.
 
 ## SECCIÓN Y ETAPA
 Debes identificar a qué SECCIÓN de producto (SOLIDOS, ACONDICIONADO, CAPSULAS_BLANDAS, COSMETICOS, INY_HORMONALES, MENTHOLATUM, POLVOS_EFERVESCENTES, SEMISOLIDOS, SEMISOLIDOS_HORM, SOLIDOS_HORMONALES, SOLIDOS_4) y a qué ETAPA (FABRICACION, RECUBRIMIENTO, ENVASE, ACONDICIONADO) pertenece el RMD. Si no podés determinarlo con confianza, usa "NO_IDENTIFICADA" y explicá por qué en el resumen ejecutivo.`;
@@ -691,6 +722,8 @@ NO inventes una comparación que no existe: no hay "otro documento" con el que c
 10. **JSON estricto, nada de texto libre.** Tu respuesta completa debe ser un único objeto JSON válido que cumpla exactamente el schema proporcionado. No agregues explicaciones antes o después del JSON. No uses markdown ni bloques de código.
 
 11. **Idioma.** Todo el contenido textual debe estar en español, en el registro imperativo/normativo propio de un documento BPM.
+
+12. **Destino de navegación en las alertas de coherencia.** Toda alertaCoherencia de tipo "falla_redaccion", "equipo_retirado_en_uso" o "equipo_sin_preparacion_registrada" debe indicar DÓNDE está el problema para que el sistema pueda saltar ahí y resaltarlo en amarillo: completá "pasoId" con el paso exacto si corresponde a uno puntual, o "seccionGeneral" con "equipos_instrumentos" si el equipo está listado en la sección 1 y no en un paso puntual (null en el otro campo en cada caso), y "citaTextual" con el fragmento EXACTO (cita fiel, no paráfrasis) a resaltar. Para cualquier otro tipo de alerta, los tres van en null.
 
 ## SECCIÓN Y ETAPA
 Debes identificar a qué SECCIÓN de producto (SOLIDOS, ACONDICIONADO, CAPSULAS_BLANDAS, COSMETICOS, INY_HORMONALES, MENTHOLATUM, POLVOS_EFERVESCENTES, SEMISOLIDOS, SEMISOLIDOS_HORM, SOLIDOS_HORMONALES, SOLIDOS_4) y a qué ETAPA (FABRICACION, RECUBRIMIENTO, ENVASE, ACONDICIONADO) pertenece el RMD. Si no podés determinarlo con confianza, usa "NO_IDENTIFICADA" y explicá por qué en el resumen ejecutivo.`;
