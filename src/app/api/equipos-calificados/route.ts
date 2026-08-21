@@ -4,6 +4,18 @@ import { getSupabaseServerClient } from "@/lib/supabaseClient";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// dynamic="force-dynamic" evita que el SERVIDOR reuse una respuesta vieja,
+// pero sin un Cache-Control explícito el navegador (o el CDN de Vercel
+// delante) puede quedarse con la primera respuesta igual — ver el mismo
+// fix en /api/estado-ia, donde esto causó que el conteo quedara pegado en
+// 0 pese a que el servidor ya calculaba el número correcto en cada pedido.
+function sinCache(body: unknown, status = 200) {
+  return NextResponse.json(body, {
+    status,
+    headers: { "Cache-Control": "no-store, no-cache, must-revalidate" },
+  });
+}
+
 /**
  * GET /api/equipos-calificados
  * Resumen del maestro (cuántos equipos hay cargados y cuándo se importó la
@@ -17,7 +29,7 @@ export async function GET() {
       .from("equipos_calificados")
       .select("*", { count: "exact", head: true });
     if (errorConteo) {
-      return NextResponse.json({ error: errorConteo.message }, { status: 500 });
+      return sinCache({ error: errorConteo.message }, 500);
     }
 
     let actualizadoEn: string | null = null;
@@ -31,11 +43,11 @@ export async function GET() {
       if (!errorFecha) actualizadoEn = data?.actualizado_en ?? null;
     }
 
-    return NextResponse.json({ total: count ?? 0, actualizadoEn });
+    return sinCache({ total: count ?? 0, actualizadoEn });
   } catch (err: any) {
-    return NextResponse.json(
+    return sinCache(
       { error: `Error al consultar equipos calificados: ${err.message ?? "error desconocido"}` },
-      { status: 500 }
+      500
     );
   }
 }
