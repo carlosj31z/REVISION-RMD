@@ -43,7 +43,14 @@ export async function GET() {
       if (!errorFecha) actualizadoEn = data?.actualizado_en ?? null;
     }
 
-    return sinCache({ total: count ?? 0, actualizadoEn });
+    const plano = await supabase.from("equipos_calificados").select("codigo_sap").limit(3);
+    return sinCache({
+      total: count ?? 0,
+      actualizadoEn,
+      _debugCountRaw: count,
+      _debugPlano: plano.data,
+      _debugPlanoError: plano.error?.message ?? null,
+    });
   } catch (err: any) {
     return sinCache(
       { error: `Error al consultar equipos calificados: ${err.message ?? "error desconocido"}` },
