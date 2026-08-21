@@ -144,6 +144,7 @@ export interface AlertaCoherencia {
     | "documento_obsoleto_referenciado" // el RMD cita un Instructivo/Procedimiento/Formato marcado como obsoleto
     | "equipo_sin_preparacion_registrada" // un equipo/instrumento/material de la sección 1 no aparece mencionado en el procedimiento (sección 4)
     | "nota_vb_faltante" // un paso exige Visto Bueno (VB) pero no incluye la nota de verificación presencial del jefe/supervisor
+    | "falla_redaccion" // error gramatical, palabra mal escrita, frase incoherente o puntuación que cambia el sentido — NUNCA mayúsculas ni tildes
     | "otro";
   descripcion: string;
   pasosAfectados: string[];

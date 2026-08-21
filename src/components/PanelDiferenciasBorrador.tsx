@@ -71,6 +71,7 @@ const TIPO_ALERTA_LABEL: Record<AlertaCoherencia["tipo"], string> = {
   documento_obsoleto_referenciado: "Documento obsoleto referenciado",
   equipo_sin_preparacion_registrada: "Equipo sin preparación registrada",
   nota_vb_faltante: "Nota de verificación presencial (VB) faltante",
+  falla_redaccion: "Falla de redacción",
   otro: "Otro",
 };
 
