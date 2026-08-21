@@ -27,23 +27,21 @@ export async function GET() {
 
     // OJO: "count: exact, head: true" (pedir sólo el header Content-Range,
     // sin body) devolvía count=0 en producción pese a que la tabla sí tenía
-    // filas reales — un select normal las traía sin problema. En vez de
-    // depender de esa combinación puntual, se pide "actualizado_en" de
-    // TODAS las filas (liviano, una sola columna) y se cuenta el array.
-    const { data: filas, error: errorConteo } = await supabase
+    // filas reales. Traer TODAS las filas sin head:true tampoco sirve: el
+    // "max-rows" por defecto de PostgREST (1000) las trunca en silencio. La
+    // combinación que sí funciona: pedir count:"exact" con un body real
+    // (limit(1) alcanza) — evita el bug de head:true y el total que da
+    // Content-Range no depende del límite de página.
+    const { data, count, error: errorConteo } = await supabase
       .from("equipos_calificados")
-      .select("actualizado_en");
+      .select("actualizado_en", { count: "exact" })
+      .order("actualizado_en", { ascending: false })
+      .limit(1);
     if (errorConteo) {
       return sinCache({ error: errorConteo.message }, 500);
     }
 
-    const total = filas?.length ?? 0;
-    const actualizadoEn =
-      total > 0
-        ? filas!.reduce((max, f) => (f.actualizado_en > max ? f.actualizado_en : max), filas![0].actualizado_en)
-        : null;
-
-    return sinCache({ total, actualizadoEn });
+    return sinCache({ total: count ?? 0, actualizadoEn: data?.[0]?.actualizado_en ?? null });
   } catch (err: any) {
     return sinCache(
       { error: `Error al consultar equipos calificados: ${err.message ?? "error desconocido"}` },
