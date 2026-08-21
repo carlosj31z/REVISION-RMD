@@ -6,6 +6,11 @@ import {
   cargarDocumentosObsoletosActivos,
   detectarDocumentosObsoletosReferenciados,
 } from "@/lib/documentosObsoletos";
+import {
+  cargarDocumentosVigentesPorCodigos,
+  construirInfoDocumentosVigentes,
+  detectarDocumentosVencidosReferenciados,
+} from "@/lib/documentosVigentes";
 import { extraerTextoPDF, parsearEstructuraRMD } from "@/lib/pdfExtractor";
 import type { RMDExtraido } from "@/types/rmd";
 
@@ -98,6 +103,24 @@ export async function POST(req: NextRequest) {
         ...alertasDocumentosObsoletos,
       ];
     }
+
+    // 2c. Documentos vigentes (maestro importado del Excel): fuente
+    //     PRINCIPAL de vigencia — ver detectarDocumentosVencidosReferenciados.
+    const documentosVigentes = await cargarDocumentosVigentesPorCodigos(
+      supabase,
+      body.rmdVigente.documentosReferenciados.map((d) => d.codigo)
+    );
+    const alertasVencidos = detectarDocumentosVencidosReferenciados(
+      body.rmdVigente.documentosReferenciados,
+      documentosVigentes
+    );
+    if (alertasVencidos.length > 0) {
+      resultadoIA.alertasCoherencia = [...resultadoIA.alertasCoherencia, ...alertasVencidos];
+    }
+    resultadoIA.documentosVigentesInfo = construirInfoDocumentosVigentes(
+      body.rmdVigente.documentosReferenciados,
+      documentosVigentes
+    );
 
     // 3. Persistir la revisión (si no hay documentoId, se guarda igual como
     //    revisión "suelta"; documentoId es opcional para permitir pruebas rápidas)

@@ -1,11 +1,121 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import type { DocumentoObsoleto } from "@/types/rmd";
 import { leerRespuestaApi } from "@/lib/leerRespuestaApi";
 
 interface Props {
   onVolver: () => void;
+}
+
+interface ResumenVigentes {
+  total: number;
+  actualizadoEn: string | null;
+}
+
+function ImportadorDocumentosVigentes() {
+  const [resumen, setResumen] = useState<ResumenVigentes | null>(null);
+  const [cargandoResumen, setCargandoResumen] = useState(true);
+  const [importando, setImportando] = useState(false);
+  const [resultado, setResultado] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const cargarResumen = useCallback(async () => {
+    setCargandoResumen(true);
+    try {
+      const res = await fetch("/api/documentos-vigentes", { cache: "no-store" });
+      const data = await leerRespuestaApi(res);
+      if (!res.ok) throw new Error(data.error ?? "No se pudo cargar el resumen.");
+      setResumen(data);
+    } catch (err: any) {
+      // No es crítico para el resto del panel: se ve solo acá arriba.
+      setError(err.message ?? "No se pudo cargar el resumen de documentos vigentes.");
+    } finally {
+      setCargandoResumen(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    cargarResumen();
+  }, [cargarResumen]);
+
+  const importar = useCallback(
+    async (archivo: File) => {
+      setImportando(true);
+      setError(null);
+      setResultado(null);
+      try {
+        const formData = new FormData();
+        formData.append("file", archivo);
+        const res = await fetch("/api/documentos-vigentes/importar", {
+          method: "POST",
+          body: formData,
+        });
+        const data = await leerRespuestaApi(res);
+        if (!res.ok) throw new Error(data.error ?? "No se pudo importar el archivo.");
+        setResultado(
+          `${data.importados} documentos cargados` +
+            (data.omitidos > 0 ? ` (${data.omitidos} filas omitidas por estar incompletas).` : ".")
+        );
+        await cargarResumen();
+      } catch (err: any) {
+        setError(err.message ?? "Ocurrió un error inesperado al importar.");
+      } finally {
+        setImportando(false);
+        if (inputRef.current) inputRef.current.value = "";
+      }
+    },
+    [cargarResumen]
+  );
+
+  return (
+    <div className="mb-8 rounded-xl border border-line bg-surface p-4 shadow-soft">
+      <h2 className="text-[13px] font-semibold text-ink">Documentos vigentes (maestro)</h2>
+      <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
+        Cargá acá el Excel completo con todos los Instructivos/Procedimientos/Formatos vigentes
+        (columna con el código y columna con el título; si trae una columna de vigencia/validez,
+        también se usa). Reemplaza todo lo cargado antes — es la lista completa a hoy, no un
+        agregado. Éste es el indicador PRINCIPAL para saber si un documento sigue vigente; lo que
+        se agrega abajo a mano queda como respaldo secundario.
+      </p>
+
+      <p className="mt-3 text-[12px] text-muted">
+        {cargandoResumen ? (
+          "Consultando lo ya cargado…"
+        ) : resumen && resumen.total > 0 ? (
+          <>
+            <span className="font-medium text-ink">{resumen.total}</span> documentos cargados
+            {resumen.actualizadoEn && (
+              <> · última importación: {new Date(resumen.actualizadoEn).toLocaleString()}</>
+            )}
+          </>
+        ) : (
+          "Todavía no se cargó ningún documento vigente."
+        )}
+      </p>
+
+      <label className="mt-3 flex min-h-[38px] w-fit cursor-pointer items-center gap-2 rounded-lg bg-system px-4 text-[13px] font-medium text-white shadow-soft transition-all duration-150 ease-spring hover:bg-system-light hover:shadow-elevated active:scale-[0.98] aria-disabled:cursor-not-allowed aria-disabled:opacity-40">
+        {importando ? "Importando…" : "Elegir Excel e importar"}
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".xls,.xlsx"
+          disabled={importando}
+          onChange={(e) => {
+            const archivo = e.target.files?.[0];
+            if (archivo) importar(archivo);
+          }}
+          className="hidden"
+        />
+      </label>
+
+      {resultado && (
+        <p className="mt-2.5 text-[12.5px] text-severidad-baja">✓ {resultado}</p>
+      )}
+      {error && <p className="mt-2.5 text-[12.5px] text-severidad-critica">{error}</p>}
+    </div>
+  );
 }
 
 export function PanelDocumentosObsoletos({ onVolver }: Props) {
@@ -114,10 +224,16 @@ export function PanelDocumentosObsoletos({ onVolver }: Props) {
 
       <div className="inset-seguro-x min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-2xl animate-fade-in-up px-4 py-6 sm:px-6 sm:py-8">
+          <ImportadorDocumentosVigentes />
+
+          <h2 className="mb-1.5 text-[13px] font-semibold text-ink">
+            Documentos obsoletos (manual)
+          </h2>
           <p className="mb-6 text-[13px] leading-relaxed text-muted">
             Códigos de Instructivo, Procedimiento o Formato que ya no están vigentes (ej.{" "}
             <span className="font-mono">IPRO-P200</span>). Si un RMD sigue citando alguno, se
-            genera automáticamente una alerta en la revisión.
+            genera automáticamente una alerta en la revisión — este listado es el respaldo
+            secundario del maestro de arriba, para casos que el Excel no cubra.
           </p>
 
           <form onSubmit={agregarDocumento} className="mb-8 rounded-xl border border-line bg-surface p-4 shadow-soft">

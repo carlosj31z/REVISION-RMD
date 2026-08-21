@@ -11,6 +11,11 @@ import {
   cargarDocumentosObsoletosActivos,
   detectarDocumentosObsoletosReferenciados,
 } from "@/lib/documentosObsoletos";
+import {
+  cargarDocumentosVigentesPorCodigos,
+  construirInfoDocumentosVigentes,
+  detectarDocumentosVencidosReferenciados,
+} from "@/lib/documentosVigentes";
 import type { RMDExtraido } from "@/types/rmd";
 
 export const runtime = "nodejs";
@@ -120,6 +125,43 @@ export async function POST(req: NextRequest) {
         ...alertasDocumentosObsoletos,
       ];
     }
+
+    // Documentos vigentes (maestro importado del Excel): fuente PRINCIPAL de
+    // vigencia — si vigente_hasta ya pasó, alerta igual que un obsoleto
+    // manual, y además se adjunta título+fecha de cada documento cruzado
+    // para que la UI lo muestre junto al código sin otra consulta.
+    const codigosReferenciados = [
+      ...body.rmdVigente.documentosReferenciados,
+      ...(body.rmdBorrador?.documentosReferenciados ?? []),
+    ].map((d) => d.codigo);
+    const documentosVigentes = await cargarDocumentosVigentesPorCodigos(
+      supabase,
+      codigosReferenciados
+    );
+    const alertasVencidos = body.rmdBorrador
+      ? [
+          ...detectarDocumentosVencidosReferenciados(
+            body.rmdVigente.documentosReferenciados,
+            documentosVigentes,
+            "RMD vigente"
+          ),
+          ...detectarDocumentosVencidosReferenciados(
+            body.rmdBorrador.documentosReferenciados,
+            documentosVigentes,
+            "borrador de Producción"
+          ),
+        ]
+      : detectarDocumentosVencidosReferenciados(
+          body.rmdVigente.documentosReferenciados,
+          documentosVigentes
+        );
+    if (alertasVencidos.length > 0) {
+      resultadoIA.alertasCoherencia = [...resultadoIA.alertasCoherencia, ...alertasVencidos];
+    }
+    resultadoIA.documentosVigentesInfo = construirInfoDocumentosVigentes(
+      [...body.rmdVigente.documentosReferenciados, ...(body.rmdBorrador?.documentosReferenciados ?? [])],
+      documentosVigentes
+    );
 
     const advertenciasEquipos = resultadoIA.diferenciasDetectadas.filter(
       (d) => d.involucraEquipoRetirado

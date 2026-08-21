@@ -123,7 +123,10 @@ export function PanelDiscrepancias({
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pb-24 sm:px-5 lg:pb-4">
         <ResumenEjecutivo texto={resultado.resumenEjecutivo} />
 
-        <DocumentosReferenciados documentos={documentosReferenciados} />
+        <DocumentosReferenciados
+          documentos={documentosReferenciados}
+          vigenciaInfo={resultado.documentosVigentesInfo}
+        />
 
         {resultado.alertasCoherencia.length > 0 && (
           <div className="mb-5 space-y-2">

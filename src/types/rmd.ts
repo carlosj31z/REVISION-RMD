@@ -160,6 +160,10 @@ export interface ResultadoRevisionIA {
   camposObligatoriosFaltantes: string[]; // ej. 'VERIFICADO POR', 'FECHA/HORA FINAL' sin casilla
   scoreCoherencia: number; // 0-100
   requiereRevisionHumana: boolean;
+  // Título y fecha de vencimiento (maestro de documentos vigentes) de cada
+  // documentosReferenciados que se pudo cruzar, por código — para mostrarlo
+  // sutilmente junto a cada cita sin otra consulta desde el cliente.
+  documentosVigentesInfo?: Record<string, InfoVigenciaDocumento>;
 }
 
 // ---------- Comparación RMD vigente vs. borrador enviado por Producción ----------
@@ -212,6 +216,7 @@ export interface ResultadoComparacionBorrador {
   equiposRetiradosDetectados: string[];
   coincidenciaPorcentaje: number; // 0-100, qué tan parecidos son ambos documentos
   requiereRevisionHumana: boolean;
+  documentosVigentesInfo?: Record<string, InfoVigenciaDocumento>;
 }
 
 // ---------- Reglas permanentes de homologación ----------
@@ -243,6 +248,34 @@ export interface DocumentoObsoleto {
   activo: boolean;
   creadoPor?: string | null;
   createdAt?: string;
+}
+
+// ---------- Documentos vigentes (maestro importado desde Excel) ----------
+// A diferencia de DocumentoObsoleto (carga manual, caso por caso), este es
+// el listado COMPLETO de documentos que la empresa mantiene, importado en
+// bloque. Es la fuente principal para saber si un documento sigue vigente
+// (vigenteHasta ya pasó o no); documentos_obsoletos queda como respaldo
+// secundario para casos que este maestro no cubra.
+
+export interface DocumentoVigente {
+  id: string;
+  codigo: string; // ej. "FACO-200"
+  titulo: string;
+  categoria?: string | null;
+  revision?: string | null;
+  fechaEmision?: string | null; // ISO date
+  vigenteHasta?: string | null; // ISO date; null = sin fecha de vencimiento conocida
+  actualizadoEn?: string;
+}
+
+// Info resumida de vigencia para un documento referenciado en un RMD, tal
+// como se adjunta al resultado de una revisión para que la UI la muestre
+// sutilmente junto al código (título + hasta cuándo vale), sin necesidad de
+// otra consulta desde el cliente.
+export interface InfoVigenciaDocumento {
+  titulo: string;
+  vigenteHasta: string | null;
+  vencido: boolean;
 }
 
 // ---------- Verificación de corrección (subir RMD corregido) ----------

@@ -1,11 +1,25 @@
 "use client";
 
 import { useState } from "react";
-import type { DocumentoReferenciado } from "@/types/rmd";
+import type { DocumentoReferenciado, InfoVigenciaDocumento } from "@/types/rmd";
 
 const ORDEN_TIPOS: DocumentoReferenciado["tipo"][] = ["Instructivo", "Procedimiento", "Formato"];
 
-export function DocumentosReferenciados({ documentos }: { documentos: DocumentoReferenciado[] }) {
+function formatearFechaCorta(iso: string): string {
+  const [anio, mes, dia] = iso.split("-");
+  return `${dia}/${mes}/${anio}`;
+}
+
+interface Props {
+  documentos: DocumentoReferenciado[];
+  // Título + hasta cuándo vale cada código, según el maestro de documentos
+  // vigentes (ver /api/documentos-vigentes) — se muestra sutilmente como
+  // tooltip al pasar el mouse, y con un punto rojo si ya venció, en vez de
+  // ocupar espacio fijo en la lista compacta de chips.
+  vigenciaInfo?: Record<string, InfoVigenciaDocumento>;
+}
+
+export function DocumentosReferenciados({ documentos, vigenciaInfo }: Props) {
   const [abierto, setAbierto] = useState(false);
   if (documentos.length === 0) return null;
 
@@ -39,14 +53,34 @@ export function DocumentosReferenciados({ documentos }: { documentos: DocumentoR
                     {tipo}s ({items.length})
                   </p>
                   <ul className="flex flex-wrap gap-1.5">
-                    {items.map((d) => (
-                      <li
-                        key={d.codigo}
-                        className="rounded-full border border-line bg-paper px-2.5 py-1 font-mono text-[11px] text-ink/80 transition-colors duration-150 hover:border-system/50"
-                      >
-                        {d.codigo}
-                      </li>
-                    ))}
+                    {items.map((d) => {
+                      const info = vigenciaInfo?.[d.codigo];
+                      const titulo = info
+                        ? `${info.titulo}${
+                            info.vigenteHasta
+                              ? info.vencido
+                                ? ` — venció el ${formatearFechaCorta(info.vigenteHasta)}`
+                                : ` — vigente hasta ${formatearFechaCorta(info.vigenteHasta)}`
+                              : ""
+                          }`
+                        : undefined;
+                      return (
+                        <li
+                          key={d.codigo}
+                          title={titulo}
+                          className={`flex items-center gap-1 rounded-full border px-2.5 py-1 font-mono text-[11px] transition-colors duration-150 ${
+                            info?.vencido
+                              ? "border-severidad-critica/40 bg-severidad-criticaTint text-severidad-critica hover:border-severidad-critica/70"
+                              : "border-line bg-paper text-ink/80 hover:border-system/50"
+                          }`}
+                        >
+                          {info?.vencido && (
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-severidad-critica" aria-hidden="true" />
+                          )}
+                          {d.codigo}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               );
