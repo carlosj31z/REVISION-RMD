@@ -25,32 +25,25 @@ export async function GET() {
   try {
     const supabase = getSupabaseServerClient();
 
-    const { count, error: errorConteo } = await supabase
+    // OJO: "count: exact, head: true" (pedir sólo el header Content-Range,
+    // sin body) devolvía count=0 en producción pese a que la tabla sí tenía
+    // filas reales — un select normal las traía sin problema. En vez de
+    // depender de esa combinación puntual, se pide "actualizado_en" de
+    // TODAS las filas (liviano, una sola columna) y se cuenta el array.
+    const { data: filas, error: errorConteo } = await supabase
       .from("equipos_calificados")
-      .select("*", { count: "exact", head: true });
+      .select("actualizado_en");
     if (errorConteo) {
       return sinCache({ error: errorConteo.message }, 500);
     }
 
-    let actualizadoEn: string | null = null;
-    if (count && count > 0) {
-      const { data, error: errorFecha } = await supabase
-        .from("equipos_calificados")
-        .select("actualizado_en")
-        .order("actualizado_en", { ascending: false })
-        .limit(1)
-        .single();
-      if (!errorFecha) actualizadoEn = data?.actualizado_en ?? null;
-    }
+    const total = filas?.length ?? 0;
+    const actualizadoEn =
+      total > 0
+        ? filas!.reduce((max, f) => (f.actualizado_en > max ? f.actualizado_en : max), filas![0].actualizado_en)
+        : null;
 
-    const plano = await supabase.from("equipos_calificados").select("codigo_sap").limit(3);
-    return sinCache({
-      total: count ?? 0,
-      actualizadoEn,
-      _debugCountRaw: count,
-      _debugPlano: plano.data,
-      _debugPlanoError: plano.error?.message ?? null,
-    });
+    return sinCache({ total, actualizadoEn });
   } catch (err: any) {
     return sinCache(
       { error: `Error al consultar equipos calificados: ${err.message ?? "error desconocido"}` },
