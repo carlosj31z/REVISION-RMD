@@ -349,3 +349,40 @@ export interface ResultadoVerificacionCorreccion {
   resumenVerificacion: string;
   verificaciones: VerificacionHallazgo[];
 }
+
+// ---------- Comparación contra un RMD de referencia (homologación) ----------
+// A diferencia de comparar contra un borrador (misma versión del MISMO RMD,
+// antes/después) o un Control de Cambio (una instrucción puntual), acá se
+// comparan dos RMD DISTINTOS — el que se está evaluando y otro que se toma
+// como referencia/modelo (ej. de una línea o producto ya estandarizado) —
+// para encontrar pasos con estructura/contenido equivalente y sugerir
+// homologar redacción, orden o estructura. No todo paso tiene un
+// equivalente razonable en el otro documento: la IA debe usar criterio para
+// no forzar homologaciones entre pasos que en realidad son distintos.
+
+export type TipoHomologacionReferencia =
+  | "redaccion_puede_homologarse" // el paso existe en ambos con el mismo propósito pero la redacción difiere — se sugiere alinear el texto al de la referencia
+  | "paso_faltante_en_rmd" // la referencia tiene un paso equivalente que el RMD evaluado no tiene — se sugiere incluirlo
+  | "paso_sobrante_en_rmd" // el RMD evaluado tiene un paso que la referencia no contempla — se sugiere evaluar si corresponde eliminarlo
+  | "orden_distinto"; // ambos documentos tienen pasos equivalentes pero en otro orden — se sugiere reordenar
+
+export interface SugerenciaHomologacionReferencia {
+  pasoIdRmd: string | null; // paso del RMD evaluado, o null si el paso no existe ahí (hay que incluirlo)
+  pasoIdReferencia: string | null; // paso equivalente en la referencia, o null si no tiene equivalente (hay que evaluar eliminarlo)
+  seccionGeneral: SeccionGeneral | null; // si la sugerencia no es un paso puntual sino una sección general navegable
+  tipo: TipoHomologacionReferencia;
+  accionSugerida: "incluir" | "modificar" | "eliminar" | "reordenar";
+  textoEnRmd: string | null; // cita fiel de lo que dice hoy el RMD evaluado en ese punto
+  textoEnReferencia: string | null; // cita fiel de lo que dice la referencia en su paso equivalente
+  justificacion: string; // por qué se sugiere homologar (o no), con criterio — no forzar equivalencias forzadas
+  nivelConfianza: "alta" | "media" | "baja";
+}
+
+export interface ResultadoComparacionReferencia {
+  resumenEjecutivo: string;
+  seccionDetectada: SeccionCodigo | "NO_IDENTIFICADA";
+  etapaDetectada: EtapaCodigo | "NO_IDENTIFICADA";
+  sugerenciasHomologacion: SugerenciaHomologacionReferencia[];
+  gradoHomologacion: number; // 0-100, qué tan alineada está la estructura/redacción del RMD con la referencia
+  requiereRevisionHumana: boolean;
+}

@@ -3,6 +3,7 @@ import type {
   RMDExtraido,
   ResultadoRevisionIA,
   ResultadoComparacionBorrador,
+  ResultadoComparacionReferencia,
   ReglaHomologacion,
   HallazgoAVerificar,
   ResultadoVerificacionCorreccion,
@@ -860,6 +861,162 @@ ${JSON.stringify(input.rmdCorregido, null, 2)}`;
     textoContenido,
     pdfsAdjuntos,
     schema: responseSchemaVerificacion,
+  });
+
+  return parsed;
+}
+
+// ============================================================
+// Comparación contra un RMD de referencia (homologación)
+// ============================================================
+// A diferencia de compararRMDvsBorrador (dos versiones del MISMO RMD, antes/
+// después de un cambio propuesto) o compararRMDvsControlCambios (una
+// instrucción puntual), acá se comparan dos RMD DISTINTOS entre sí — el que
+// se está evaluando contra otro que se toma como referencia/modelo (ej. de
+// otra línea o producto ya estandarizado) — para encontrar pasos con
+// estructura o propósito equivalente y sugerir homologar redacción, orden o
+// estructura. El criterio es la parte difícil: dos RMD de productos
+// distintos casi nunca son idénticos paso a paso, así que la mayoría de los
+// pasos NO tienen un equivalente razonable en el otro documento, y forzar
+// una homologación ahí sería peor que no sugerir nada.
+
+const SYSTEM_PROMPT_REFERENCIA = `Eres un Auditor de Calidad Farmacéutica (QA) especializado en revisión de Registros de Manufactura Digital (RMD) bajo normativa BPM/GMP, trabajando para una planta farmacéutica peruana (Medifarma).
+
+## TU ÚNICA FUNCIÓN
+Recibís DOS documentos RMD de productos o líneas que pueden ser DISTINTOS: el RMD A EVALUAR y un RMD DE REFERENCIA que el analista eligió como modelo a seguir (ej. porque ya está bien estandarizado, o porque pertenece a una línea con la que se quiere homologar terminología y estructura). Tu trabajo es encontrar, con criterio, los pasos del RMD evaluado que tienen un propósito o estructura EQUIVALENTE a algún paso de la referencia, y sugerir si conviene incluir, modificar, eliminar o reordenar algo en el RMD evaluado para que se homologue mejor con la referencia — SIN redactar el texto final ni asumir que ambos documentos deberían terminar siendo idénticos.
+
+## EL CRITERIO ES LO MÁS IMPORTANTE DE ESTA TAREA
+Dos RMD de productos distintos casi nunca coinciden paso a paso — cada uno tiene su propia fórmula, cantidades, equipos y particularidades. **La mayoría de los pasos de cada documento NO van a tener un equivalente razonable en el otro, y eso es lo normal, no un error.** Sólo reportá una sugerencia de homologación cuando el paso cumple un rol EQUIVALENTE en el proceso (ej. "pesar y verificar el insumo principal", "ajustar velocidad de la mezcladora", "registrar temperatura de secado") y la diferencia entre ambos documentos es de REDACCIÓN, ORDEN o ESTRUCTURA — no de contenido técnico sustantivo (cantidades, equipos, tiempos, parámetros que legítimamente son distintos porque son productos distintos). Ante la duda de si dos pasos son realmente equivalentes o sólo se parecen superficialmente, NO los reportes como homologables — es preferible reportar pocas sugerencias con fundamento sólido que muchas forzadas.
+
+## QUÉ SÍ CORRESPONDE SUGERIR
+- **"redaccion_puede_homologarse"**: el paso existe en ambos documentos cumpliendo el mismo rol, pero la referencia lo redacta de forma más clara, estandarizada o distinta en un punto que valdría la pena homologar (terminología, formato de la instrucción, nivel de detalle). "accionSugerida": "modificar".
+- **"paso_faltante_en_rmd"**: la referencia tiene un paso que cumple un rol que el RMD evaluado también debería tener (ej. un control de calidad intermedio, una verificación) pero no lo incluye. "pasoIdRmd": null, "accionSugerida": "incluir".
+- **"paso_sobrante_en_rmd"**: el RMD evaluado tiene un paso sin ningún equivalente ni rol reconocible en la referencia, y por el contexto general de ambos documentos parece que podría no corresponder (no simplemente "la referencia no lo tiene" — eso solo no alcanza, la mayoría de los pasos son legítimamente específicos de cada producto). Usalo con mucha cautela. "pasoIdReferencia": null, "accionSugerida": "eliminar".
+- **"orden_distinto"**: ambos documentos tienen pasos equivalentes reconocibles pero en otro orden relativo, y homologar el orden mejoraría la consistencia entre líneas/productos. "accionSugerida": "reordenar".
+
+## REGLAS ABSOLUTAS (no negociables)
+
+1. **Prohibido redactar reemplazos.** No inventes el texto final que debería llevar un paso homologado; "textoEnReferencia" es una cita fiel de lo que YA dice la referencia, no una redacción nueva.
+
+2. **Cero alucinación.** "textoEnRmd" y "textoEnReferencia" deben ser citas fieles de lo que dice cada documento (no paráfrasis). Si un paso no existe en uno de los dos, ese campo va en null.
+
+3. **Localización exacta.** Usá "pasoIdRmd" y "pasoIdReferencia" con el id numérico tal como aparece en cada documento (ej. "4.2.5"). Si la sugerencia corresponde a una sección general del RMD evaluado (Precauciones, Notas Importantes, Equipos/Instrumentos/Materiales, Condiciones Ambientales) en vez de un paso puntual, usá "seccionGeneral" con el valor correspondiente y "pasoIdRmd": null; en cualquier otro caso "seccionGeneral": null.
+
+4. **NUNCA analices el encabezado.** Código, versión, edición, estado, fecha de estado, autorizado por, teórico — de NINGUNO de los dos documentos son objeto de esta revisión, aunque sean completamente distintos (lo son por diseño, son productos diferentes).
+
+5. **"gradoHomologacion"** refleja qué tan alineados están AMBOS documentos en redacción/estructura de sus pasos equivalentes (100 = los pasos equivalentes están redactados y ordenados de forma consistente entre sí; baja en proporción a cuántas sugerencias de homologación con fundamento real encontraste — NO baja simplemente porque los documentos tratan productos distintos con pasos sin equivalente, eso es esperado y no cuenta en contra).
+
+6. **Honestidad sobre incertidumbre.** Si no encontrás pasos con equivalencia clara, "sugerenciasHomologacion" puede quedar vacío — es un resultado válido, no busques forzar coincidencias. Si algo es ambiguo, "nivelConfianza": "baja" y explicalo en "justificacion".
+
+7. **JSON estricto, nada de texto libre.** Tu respuesta completa debe ser un único objeto JSON válido que cumpla exactamente el schema proporcionado. No agregues explicaciones antes o después del JSON. No uses markdown ni bloques de código.
+
+8. **Idioma.** Todo el contenido textual debe estar en español, en el registro imperativo/normativo propio de un documento BPM.
+
+## SECCIÓN Y ETAPA
+Identificá a qué SECCIÓN de producto (SOLIDOS, ACONDICIONADO, CAPSULAS_BLANDAS, COSMETICOS, INY_HORMONALES, MENTHOLATUM, POLVOS_EFERVESCENTES, SEMISOLIDOS, SEMISOLIDOS_HORM, SOLIDOS_HORMONALES, SOLIDOS_4) y a qué ETAPA (FABRICACION, RECUBRIMIENTO, ENVASE, ACONDICIONADO) pertenece el RMD EVALUADO (no la referencia), basándote en su encabezado. Si no podés determinarlo con confianza, usa "NO_IDENTIFICADA" y explicá por qué en el resumen ejecutivo.`;
+
+const responseSchemaReferencia = {
+  type: SchemaType.OBJECT,
+  properties: {
+    resumenEjecutivo: { type: SchemaType.STRING },
+    seccionDetectada: { type: SchemaType.STRING },
+    etapaDetectada: { type: SchemaType.STRING },
+    sugerenciasHomologacion: {
+      type: SchemaType.ARRAY,
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          pasoIdRmd: { type: SchemaType.STRING, nullable: true },
+          pasoIdReferencia: { type: SchemaType.STRING, nullable: true },
+          seccionGeneral: {
+            type: SchemaType.STRING,
+            enum: ["precauciones", "notas_importantes", "equipos_instrumentos", "condiciones_ambientales"],
+            nullable: true,
+          },
+          tipo: {
+            type: SchemaType.STRING,
+            enum: [
+              "redaccion_puede_homologarse",
+              "paso_faltante_en_rmd",
+              "paso_sobrante_en_rmd",
+              "orden_distinto",
+            ],
+          },
+          accionSugerida: {
+            type: SchemaType.STRING,
+            enum: ["incluir", "modificar", "eliminar", "reordenar"],
+          },
+          textoEnRmd: { type: SchemaType.STRING, nullable: true },
+          textoEnReferencia: { type: SchemaType.STRING, nullable: true },
+          justificacion: { type: SchemaType.STRING },
+          nivelConfianza: { type: SchemaType.STRING, enum: ["alta", "media", "baja"] },
+        },
+        required: [
+          "pasoIdRmd",
+          "pasoIdReferencia",
+          "seccionGeneral",
+          "tipo",
+          "accionSugerida",
+          "textoEnRmd",
+          "textoEnReferencia",
+          "justificacion",
+          "nivelConfianza",
+        ],
+      },
+    },
+    gradoHomologacion: { type: SchemaType.NUMBER },
+    requiereRevisionHumana: { type: SchemaType.BOOLEAN },
+  },
+  required: [
+    "resumenEjecutivo",
+    "seccionDetectada",
+    "etapaDetectada",
+    "sugerenciasHomologacion",
+    "gradoHomologacion",
+    "requiereRevisionHumana",
+  ],
+};
+
+export interface ComparacionReferenciaInput {
+  rmd: RMDExtraido;
+  pdfBase64?: string;
+  rmdReferencia: RMDExtraido;
+  pdfReferenciaBase64?: string;
+}
+
+export async function compararRMDvsReferencia(
+  input: ComparacionReferenciaInput
+): Promise<ResultadoComparacionReferencia> {
+  const textoContenido = `## RMD A EVALUAR (estructura extraída, sección 6 de firmas ya excluida — el encabezado NO es objeto de revisión)
+
+${JSON.stringify(input.rmd, null, 2)}
+
+## RMD DE REFERENCIA (estructura extraída, sección 6 de firmas ya excluida — el encabezado NO es objeto de revisión)
+
+${JSON.stringify(input.rmdReferencia, null, 2)}`;
+
+  const pdfsAdjuntos = [];
+  if (input.pdfBase64) {
+    pdfsAdjuntos.push({
+      mimeType: "application/pdf",
+      data: input.pdfBase64,
+      etiqueta: "PDF original del RMD a evaluar, como respaldo visual del layout.",
+    });
+  }
+  if (input.pdfReferenciaBase64) {
+    pdfsAdjuntos.push({
+      mimeType: "application/pdf",
+      data: input.pdfReferenciaBase64,
+      etiqueta: "PDF original del RMD de referencia, como respaldo visual del layout.",
+    });
+  }
+
+  const parsed: ResultadoComparacionReferencia = await generarJSONConFallback({
+    nombreOperacion: "compararRMDvsReferencia",
+    systemPrompt: SYSTEM_PROMPT_REFERENCIA,
+    textoContenido,
+    pdfsAdjuntos,
+    schema: responseSchemaReferencia,
   });
 
   return parsed;

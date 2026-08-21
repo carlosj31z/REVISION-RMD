@@ -29,11 +29,10 @@ interface Props {
   cargando: boolean;
   // "vigente" (por defecto): flujo normal, el documento autorizado hoy vs.
   // el borrador que propone Producción — acá el borrador es obligatorio.
-  // "corregido": atajo para cuando el analista ya armó su propia versión
-  // corregida/actualizada. El borrador es OPCIONAL: si lo adjunta, se
-  // compara contra él; si NO lo adjunta, se entiende que quiere verificar
-  // el RMD corregido por sí solo contra las reglas permanentes y que no
-  // cite documentos obsoletos (ver PanelDiferenciasBorrador/verificarCumplimientoSolo).
+  // "corregido": "Revisar RMD" — audita un único documento (reglas
+  // permanentes, documentos obsoletos/vigentes, equipos calificados,
+  // redacción) sin ofrecer subir ningún borrador (ver
+  // PanelDiferenciasBorrador/verificarCumplimientoSolo).
   variante?: "vigente" | "corregido";
 }
 
@@ -50,15 +49,15 @@ const COPIA_POR_VARIANTE = {
     placeholderPrimerDocumento: "Selecciona el PDF del RMD vigente",
   },
   corregido: {
-    eyebrow: "Verificar RMD corregido",
-    titulo: "RMD corregido vs. borrador de Producción",
+    eyebrow: "Revisar RMD",
+    titulo: "Revisar un RMD",
     descripcion:
-      "Si ya editaste el RMD en SAP aplicando lo que pidió Producción, subilo acá " +
-      "para verificar qué indicaciones del borrador ya quedaron incorporadas y cuáles " +
-      "siguen pendientes. Lo que ya aplicaste no vuelve a aparecer como observación.",
-    labelPrimerDocumento: "RMD corregido (PDF)",
-    descripcionPrimerDocumento: "El documento ya actualizado que querés confirmar.",
-    placeholderPrimerDocumento: "Selecciona el PDF del RMD corregido",
+      "Audita un único documento contra las reglas permanentes, el maestro de " +
+      "documentos vigentes/obsoletos, el maestro de equipos calificados, citas cruzadas, " +
+      "cuadre de insumos y fallas de redacción — sin compararlo contra ningún otro documento.",
+    labelPrimerDocumento: "RMD a revisar (PDF)",
+    descripcionPrimerDocumento: "El documento que querés auditar.",
+    placeholderPrimerDocumento: "Selecciona el PDF del RMD",
   },
 } as const;
 
@@ -72,9 +71,11 @@ export function FormularioComparacionBorrador({
   const [seccion, setSeccion] = useState<string>("SOLIDOS");
   const [etapa, setEtapa] = useState<string>("FABRICACION");
   const copia = COPIA_POR_VARIANTE[variante];
-  const borradorOpcional = variante === "corregido";
+  // "Revisar RMD" ya no ofrece adjuntar ningún borrador — siempre audita el
+  // documento por sí solo (ver verificarCumplimientoSolo).
+  const muestraBorrador = variante === "vigente";
 
-  const puedeEnviar = !!rmdVigenteFile && (!!rmdBorradorFile || borradorOpcional);
+  const puedeEnviar = !!rmdVigenteFile && (!muestraBorrador || !!rmdBorradorFile);
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -112,29 +113,19 @@ export function FormularioComparacionBorrador({
           />
         </Campo>
 
-        <Campo
-          label={`Borrador de Producción (PDF)${borradorOpcional ? " — opcional" : ""}`}
-          descripcion={
-            borradorOpcional
-              ? "Si lo adjuntás, se compara el RMD corregido contra este borrador."
-              : "La versión propuesta que Producción envió para la próxima actualización."
-          }
-        >
-          <InputArchivo
-            file={rmdBorradorFile}
-            onChange={setRmdBorradorFile}
-            accept="application/pdf"
-            placeholder="Selecciona el PDF del borrador"
-          />
-          {borradorOpcional && !rmdBorradorFile && (
-            <p className="mt-2 rounded-lg border border-system/25 bg-system-tint px-3 py-2 text-[12px] leading-relaxed text-system">
-              Sin borrador: se va a verificar que el RMD corregido cumpla las{" "}
-              <strong className="font-semibold">reglas permanentes</strong> y que no cite{" "}
-              <strong className="font-semibold">documentos obsoletos</strong> — no se compara
-              contra ningún otro documento.
-            </p>
-          )}
-        </Campo>
+        {muestraBorrador && (
+          <Campo
+            label="Borrador de Producción (PDF)"
+            descripcion="La versión propuesta que Producción envió para la próxima actualización."
+          >
+            <InputArchivo
+              file={rmdBorradorFile}
+              onChange={setRmdBorradorFile}
+              accept="application/pdf"
+              placeholder="Selecciona el PDF del borrador"
+            />
+          </Campo>
+        )}
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Campo label="Sección">
@@ -167,11 +158,7 @@ export function FormularioComparacionBorrador({
       </div>
 
       <BotonPrimario disabled={!puedeEnviar || cargando}>
-        {cargando
-          ? "Procesando…"
-          : borradorOpcional && !rmdBorradorFile
-            ? "Verificar cumplimiento"
-            : "Comparar documentos"}
+        {cargando ? "Procesando…" : muestraBorrador ? "Comparar documentos" : "Revisar RMD"}
       </BotonPrimario>
     </form>
   );

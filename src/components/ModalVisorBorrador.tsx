@@ -9,12 +9,23 @@ interface Props {
   onClose: () => void;
   onBlobInvalido?: () => void;
   archivo?: File;
+  // Reutilizado también para "Comparar con RMD Referencia" (ver
+  // PanelHomologacionReferencia): el título se adapta al documento que
+  // realmente se está mostrando.
+  titulo?: string;
 }
 
-/** Modal que muestra el PDF del borrador de Producción, saltando directo al
- * punto donde se originó una diferencia — sin reemplazar el visor principal
- * (que sigue mostrando el RMD vigente). */
-export function ModalVisorBorrador({ pdfUrl, salto, onClose, onBlobInvalido, archivo }: Props) {
+/** Modal que muestra el PDF de un segundo documento (borrador de Producción
+ * o RMD de referencia), saltando directo al punto donde se originó una
+ * diferencia/sugerencia — sin reemplazar el visor principal. */
+export function ModalVisorBorrador({
+  pdfUrl,
+  salto,
+  onClose,
+  onBlobInvalido,
+  archivo,
+  titulo = "Vista del borrador de Producción",
+}: Props) {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -36,9 +47,7 @@ export function ModalVisorBorrador({ pdfUrl, salto, onClose, onBlobInvalido, arc
       >
         <div className="inset-seguro-x flex shrink-0 items-center justify-between gap-2 border-b border-line px-4 py-3">
           <div className="min-w-0">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
-              Vista del borrador de Producción
-            </p>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted">{titulo}</p>
             <p className="truncate text-[13px] font-semibold text-ink">
               {salto.pasoId ? `Paso ${salto.pasoId}` : `Página ${salto.pagina}`}
             </p>

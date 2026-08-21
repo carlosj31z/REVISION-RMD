@@ -4,9 +4,11 @@ import { useState, useCallback, useEffect, useRef, forwardRef } from "react";
 import { FormularioCarga } from "@/components/FormularioCarga";
 import { GeneradorNomenclatura } from "@/components/GeneradorNomenclatura";
 import { FormularioComparacionBorrador } from "@/components/FormularioComparacionBorrador";
+import { FormularioComparacionReferencia } from "@/components/FormularioComparacionReferencia";
 import { PanelRMDVigente } from "@/components/PanelRMDVigente";
 import { PanelDiscrepancias } from "@/components/PanelDiscrepancias";
 import { PanelDiferenciasBorrador } from "@/components/PanelDiferenciasBorrador";
+import { PanelHomologacionReferencia } from "@/components/PanelHomologacionReferencia";
 import { ModalVisorBorrador } from "@/components/ModalVisorBorrador";
 import { PanelReglas } from "@/components/PanelReglas";
 import { PanelDocumentosObsoletos } from "@/components/PanelDocumentosObsoletos";
@@ -19,11 +21,16 @@ import type {
   RMDExtraido,
   ResultadoRevisionIA,
   ResultadoComparacionBorrador,
+  ResultadoComparacionReferencia,
   DestinoPdf,
 } from "@/types/rmd";
 
 type EstadoSeguimiento = "pendiente" | "corregido_en_sap" | "descartado";
-type ModoEntrada = "control_cambios" | "borrador" | "corregido_vs_borrador";
+// "revisar": auditoría de un solo RMD (antes "corregido_vs_borrador", ya sin
+// opción de adjuntar un borrador — ver FormularioComparacionBorrador variante
+// "corregido" con borrador siempre ausente). "referencia": nuevo modo de
+// homologación contra otro RMD (ver compararRMDvsReferencia en gemini.ts).
+type ModoEntrada = "revisar" | "borrador" | "referencia" | "control_cambios";
 
 type VistaResultado =
   | {
@@ -65,6 +72,22 @@ type VistaResultado =
       // de leer el PDF con IA. El analista tiene que saberlo para verificar
       // las cifras contra el original.
       avisosExtraccion?: string[];
+    }
+  | {
+      tipo: "resultado-referencia";
+      rmd: RMDExtraido;
+      pdfUrl: string;
+      resultado: ResultadoComparacionReferencia;
+      revisionId: string | null;
+      archivoVigente: File;
+      // Se conservan tanto el PDF como la estructura de la referencia (mismo
+      // patrón que pdfBorradorUrl/archivoBorrador/rmdBorrador en
+      // "resultado-borrador") para poder abrir el modal "ver en la
+      // referencia" saltando a la página/paso correcto.
+      pdfReferenciaUrl: string;
+      archivoReferencia: File;
+      rmdReferencia: RMDExtraido;
+      avisosExtraccion?: string[];
     };
 
 /**
@@ -103,6 +126,9 @@ function liberarPdfs(v: VistaResultado) {
   if (v.tipo === "resultado-borrador" && v.pdfBorradorUrl) {
     URL.revokeObjectURL(v.pdfBorradorUrl);
   }
+  if (v.tipo === "resultado-referencia") {
+    URL.revokeObjectURL(v.pdfReferenciaUrl);
+  }
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -117,7 +143,7 @@ async function fileToBase64(file: File): Promise<string> {
 }
 
 export default function Home() {
-  const [modo, setModo] = useState<ModoEntrada>("borrador");
+  const [modo, setModo] = useState<ModoEntrada>("revisar");
   const [vista, setVista] = useState<VistaActual>({ tipo: "carga" });
   const tabRefs = useRef<Partial<Record<ModoEntrada, HTMLButtonElement | null>>>({});
   const [indicador, setIndicador] = useState<{ left: number; width: number } | null>(null);
@@ -208,6 +234,21 @@ export default function Home() {
           } catch {}
         }
         return { ...s, vista: { ...s.vista, pdfBorradorUrl } };
+      });
+    },
+    [actualizarSesion]
+  );
+
+  const recuperarPdfReferenciaInvalido = useCallback(
+    (sesionId: string) => {
+      actualizarSesion(sesionId, (s) => {
+        if (s.vista.tipo !== "resultado-referencia") return s;
+        const urlAnterior = s.vista.pdfReferenciaUrl;
+        const pdfReferenciaUrl = URL.createObjectURL(s.vista.archivoReferencia);
+        try {
+          URL.revokeObjectURL(urlAnterior);
+        } catch {}
+        return { ...s, vista: { ...s.vista, pdfReferenciaUrl } };
       });
     },
     [actualizarSesion]
@@ -427,6 +468,92 @@ export default function Home() {
     [abrirNuevaSesion]
   );
 
+  const iniciarComparacionReferencia = useCallback(
+    async (input: { rmdFile: File; rmdReferenciaFile: File }) => {
+      setErrorVerificacion(null);
+      try {
+        setVista({
+          tipo: "cargando",
+          mensaje: "Extrayendo el RMD a evaluar… (si es un escaneo, hay que leerlo con IA y puede tardar unos minutos)",
+        });
+
+        const formDataRmd = new FormData();
+        formDataRmd.append("file", input.rmdFile);
+        const extractRes = await fetch("/api/extract-pdf", { method: "POST", body: formDataRmd });
+        if (!extractRes.ok) {
+          const err = await leerRespuestaApi(extractRes);
+          throw new Error(err.error ?? "No se pudo extraer el PDF del RMD a evaluar.");
+        }
+        const datos = await leerRespuestaApi(extractRes);
+        const estructura = datos.estructura;
+        const pdfBase64 = datos.pdfBase64;
+
+        const avisos: string[] = [];
+        const registrarAviso = (d: any, etiqueta: string) => {
+          if (d.origenExtraccion === "ocr") {
+            avisos.push(
+              `${etiqueta}: es un documento escaneado, así que su estructura se reconstruyó ` +
+                `leyéndolo con IA (${d.pasosDetectados ?? 0} pasos transcriptos). Verificá ` +
+                `los datos numéricos contra el PDF antes de darlos por buenos.`
+            );
+          } else if (d.origenExtraccion === "ocr_fallido") {
+            avisos.push(`${etiqueta}: ${d.avisoExtraccion}`);
+          }
+        };
+        registrarAviso(datos, "El RMD a evaluar");
+
+        setVista({ tipo: "cargando", mensaje: "Extrayendo el RMD de referencia…" });
+        const formDataReferencia = new FormData();
+        formDataReferencia.append("file", input.rmdReferenciaFile);
+        const extractReferenciaRes = await fetch("/api/extract-pdf", {
+          method: "POST",
+          body: formDataReferencia,
+        });
+        if (!extractReferenciaRes.ok) {
+          const err = await leerRespuestaApi(extractReferenciaRes);
+          throw new Error(err.error ?? "No se pudo extraer el PDF del RMD de referencia.");
+        }
+        const datosReferencia = await leerRespuestaApi(extractReferenciaRes);
+        const estructuraReferencia = datosReferencia.estructura;
+        const pdfReferenciaBase64 = datosReferencia.pdfBase64;
+        registrarAviso(datosReferencia, "El RMD de referencia");
+
+        setVista({ tipo: "cargando", mensaje: "Comparando y buscando pasos homologables…" });
+        const revisionRes = await fetch("/api/revision-referencia", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rmd: estructura,
+            pdfBase64,
+            rmdReferencia: estructuraReferencia,
+            pdfReferenciaBase64,
+          }),
+        });
+        if (!revisionRes.ok) {
+          const err = await leerRespuestaApi(revisionRes);
+          throw new Error(err.error ?? "No se pudo completar la comparación.");
+        }
+        const data = await leerRespuestaApi(revisionRes);
+
+        abrirNuevaSesion({
+          tipo: "resultado-referencia",
+          rmd: estructura,
+          pdfUrl: URL.createObjectURL(input.rmdFile),
+          archivoVigente: input.rmdFile,
+          resultado: data.resultado,
+          revisionId: data.revisionId ?? null,
+          pdfReferenciaUrl: URL.createObjectURL(input.rmdReferenciaFile),
+          archivoReferencia: input.rmdReferenciaFile,
+          rmdReferencia: estructuraReferencia,
+          avisosExtraccion: avisos.length > 0 ? avisos : undefined,
+        });
+      } catch (err: any) {
+        setVista({ tipo: "error", mensaje: err.message ?? "Ocurrió un error inesperado." });
+      }
+    },
+    [abrirNuevaSesion]
+  );
+
   const cambiarEstadoSeguimiento = useCallback(
     async (pasoId: string, estado: EstadoSeguimiento) => {
       const sesion = sesionActiva;
@@ -458,6 +585,7 @@ export default function Home() {
       const sesion = sesionActiva;
       if (!sesion) return;
       const vistaActual = sesion.vista;
+      if (vistaActual.tipo === "resultado-referencia") return; // sin botón visible para este tipo (ver header)
 
       setVerificandoCorreccion(true);
       setErrorVerificacion(null);
@@ -640,6 +768,48 @@ export default function Home() {
     [sesionActiva]
   );
 
+  // Mismo mecanismo que verEnBorrador, pero resolviendo contra la estructura
+  // del RMD DE REFERENCIA — reutiliza el mismo estado modalBorrador porque
+  // sólo un modal de "segundo documento" puede estar abierto a la vez, sin
+  // importar el tipo de sesión.
+  const verEnReferencia = useCallback(
+    (destino: DestinoPdf) => {
+      const vista = sesionActiva?.vista;
+      if (vista?.tipo !== "resultado-referencia") return;
+      const rmdReferencia = vista.rmdReferencia;
+
+      if (destino.pasoId && destino.pasoId !== "N/A") {
+        const paso = rmdReferencia.procedimiento.find((p) => p.id === destino.pasoId);
+        if (paso?.pagina) {
+          const pasoId = destino.pasoId;
+          const textoBuscado = destino.textoBuscado ?? null;
+          setModalBorrador((prev) => ({
+            pagina: paso.pagina!,
+            pasoId,
+            textoBuscado,
+            token: (prev?.token ?? 0) + 1,
+          }));
+          return;
+        }
+      }
+
+      if (destino.seccionGeneral) {
+        const pagina = rmdReferencia.paginasSeccionesGenerales[destino.seccionGeneral];
+        if (pagina) {
+          const seccionGeneral = destino.seccionGeneral;
+          const textoBuscado = destino.textoBuscado ?? null;
+          setModalBorrador((prev) => ({
+            pagina,
+            seccionGeneral,
+            textoBuscado,
+            token: (prev?.token ?? 0) + 1,
+          }));
+        }
+      }
+    },
+    [sesionActiva]
+  );
+
   /** Deja la sesión abierta (con todo su avance) y vuelve a la pantalla de carga. */
   const irAPantallaCarga = useCallback(() => {
     setSesionActivaId(null);
@@ -690,22 +860,34 @@ export default function Home() {
     contenido = (
       <div className="h-pantalla flex flex-col">
         <div className="material-chrome-white inset-seguro-x sticky top-0 z-10 flex flex-col gap-1 border-b border-line/70 px-3 pt-3 shadow-soft sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:pt-4">
-          <div className="scroll-x-limpio toque relative flex gap-1">
+          <div className="scroll-x-limpio toque relative flex items-center gap-1">
+            <TabModo
+              ref={(el) => {
+                tabRefs.current.revisar = el;
+              }}
+              activo={modo === "revisar"}
+              onClick={() => setModo("revisar")}
+              label="Revisar RMD"
+            />
+            <span className="mx-1 h-4 w-px shrink-0 self-center bg-line" aria-hidden="true" />
+            <span className="shrink-0 self-center pb-3 text-[11px] font-medium uppercase tracking-wide text-muted/70">
+              Comparar con
+            </span>
             <TabModo
               ref={(el) => {
                 tabRefs.current.borrador = el;
               }}
               activo={modo === "borrador"}
               onClick={() => setModo("borrador")}
-              label="Borrador de Producción"
+              label="Borrador"
             />
             <TabModo
               ref={(el) => {
-                tabRefs.current.corregido_vs_borrador = el;
+                tabRefs.current.referencia = el;
               }}
-              activo={modo === "corregido_vs_borrador"}
-              onClick={() => setModo("corregido_vs_borrador")}
-              label="RMD Corregido"
+              activo={modo === "referencia"}
+              onClick={() => setModo("referencia")}
+              label="RMD Referencia"
             />
             <TabModo
               ref={(el) => {
@@ -760,6 +942,11 @@ export default function Home() {
               onIniciarComparacion={iniciarComparacionBorrador}
               cargando={false}
               variante="vigente"
+            />
+          ) : modo === "referencia" ? (
+            <FormularioComparacionReferencia
+              onIniciarComparacion={iniciarComparacionReferencia}
+              cargando={false}
             />
           ) : (
             <FormularioComparacionBorrador
@@ -856,10 +1043,12 @@ export default function Home() {
             )}
           </div>
           <div className="scroll-x-limpio toque flex shrink-0 items-center gap-1 sm:overflow-visible">
-            <BotonSubirCorregido
-              verificando={verificandoCorreccion}
-              onSeleccionar={subirRmdCorregido}
-            />
+            {vr.tipo !== "resultado-referencia" && (
+              <BotonSubirCorregido
+                verificando={verificandoCorreccion}
+                onSeleccionar={subirRmdCorregido}
+              />
+            )}
             <button
               onClick={() => alternarFinalizada(sesionActiva.id)}
               title={
@@ -904,7 +1093,7 @@ export default function Home() {
             </button>
           ))}
         </div>
-        {vr.tipo === "resultado-borrador" && vr.avisosExtraccion && (
+        {(vr.tipo === "resultado-borrador" || vr.tipo === "resultado-referencia") && vr.avisosExtraccion && (
           <div className="inset-seguro-x animate-fade-in-up border-b border-severidad-alta/20 bg-severidad-altaTint px-4 py-2 sm:px-5">
             {vr.avisosExtraccion.map((aviso, i) => (
               <p key={i} className="text-[12px] leading-relaxed text-severidad-alta">
@@ -948,7 +1137,7 @@ export default function Home() {
               onCambiarEstado={cambiarEstadoSeguimiento}
               verificacionCorreccion={sesionActiva.verificacionCorreccion}
             />
-          ) : (
+          ) : vr.tipo === "resultado-borrador" ? (
             <PanelDiferenciasBorrador
               resultado={vr.resultado}
               documentosReferenciados={vr.rmd.documentosReferenciados}
@@ -963,6 +1152,14 @@ export default function Home() {
               onVerEnBorrador={verEnBorrador}
               puedeVerBorrador={!!vr.pdfBorradorUrl}
             />
+          ) : (
+            <PanelHomologacionReferencia
+              resultado={vr.resultado}
+              pasoResaltado={pasoResaltado}
+              onHoverPaso={setPasoResaltado}
+              onIrAPaso={irAPasoEnPdf}
+              onVerEnReferencia={verEnReferencia}
+            />
           )}
           </div>
         </div>
@@ -973,6 +1170,16 @@ export default function Home() {
             onClose={() => setModalBorrador(null)}
             onBlobInvalido={() => recuperarPdfBorradorInvalido(sesionActiva.id)}
             archivo={vr.archivoBorrador}
+          />
+        )}
+        {vr.tipo === "resultado-referencia" && modalBorrador && (
+          <ModalVisorBorrador
+            pdfUrl={vr.pdfReferenciaUrl}
+            salto={modalBorrador}
+            onClose={() => setModalBorrador(null)}
+            onBlobInvalido={() => recuperarPdfReferenciaInvalido(sesionActiva.id)}
+            archivo={vr.archivoReferencia}
+            titulo="Vista del RMD de referencia"
           />
         )}
       </div>
