@@ -43,7 +43,11 @@ export async function GET() {
       if (!errorFecha) actualizadoEn = data?.actualizado_en ?? null;
     }
 
-    return sinCache({ total: count ?? 0, actualizadoEn });
+    return sinCache({
+      total: count ?? 0,
+      actualizadoEn,
+      _debugUrl: process.env.SUPABASE_URL ?? null,
+    });
   } catch (err: any) {
     return sinCache(
       { error: `Error al consultar equipos calificados: ${err.message ?? "error desconocido"}` },
