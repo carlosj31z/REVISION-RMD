@@ -733,8 +733,15 @@ export default function Home() {
   const verEnBorrador = useCallback(
     (destino: DestinoPdf) => {
       const vista = sesionActiva?.vista;
-      if (vista?.tipo !== "resultado-borrador" || !vista.rmdBorrador || !vista.pdfBorradorUrl) return;
+      if (vista?.tipo !== "resultado-borrador" || !vista.rmdBorrador || !vista.archivoBorrador) return;
       const rmdBorrador = vista.rmdBorrador;
+
+      // Regenera la URL blob del borrador ANTES de abrir el modal, en vez de
+      // confiar en la que quedó guardada desde que se creó la sesión: si
+      // pasó un buen rato (o la pestaña estuvo en segundo plano), Chrome
+      // puede haber liberado ese blob de memoria y el visor fallaría con
+      // "Unexpected server response (0)" al abrir por primera vez.
+      if (sesionActiva) recuperarPdfBorradorInvalido(sesionActiva.id);
 
       if (destino.pasoId && destino.pasoId !== "N/A") {
         const paso = rmdBorrador.procedimiento.find((p) => p.id === destino.pasoId);
@@ -765,7 +772,7 @@ export default function Home() {
         }
       }
     },
-    [sesionActiva]
+    [sesionActiva, recuperarPdfBorradorInvalido]
   );
 
   // Mismo mecanismo que verEnBorrador, pero resolviendo contra la estructura
@@ -777,6 +784,11 @@ export default function Home() {
       const vista = sesionActiva?.vista;
       if (vista?.tipo !== "resultado-referencia") return;
       const rmdReferencia = vista.rmdReferencia;
+
+      // Ver comentario equivalente en verEnBorrador: regenera la URL blob
+      // de la referencia antes de abrir el modal, en vez de confiar en la
+      // que quedó guardada desde que se creó la sesión.
+      if (sesionActiva) recuperarPdfReferenciaInvalido(sesionActiva.id);
 
       if (destino.pasoId && destino.pasoId !== "N/A") {
         const paso = rmdReferencia.procedimiento.find((p) => p.id === destino.pasoId);
@@ -807,7 +819,7 @@ export default function Home() {
         }
       }
     },
-    [sesionActiva]
+    [sesionActiva, recuperarPdfReferenciaInvalido]
   );
 
   /** Deja la sesión abierta (con todo su avance) y vuelve a la pantalla de carga. */
