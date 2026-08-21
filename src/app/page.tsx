@@ -2,7 +2,6 @@
 
 import { useState, useCallback, useEffect, useRef, forwardRef } from "react";
 import { FormularioCarga } from "@/components/FormularioCarga";
-import { GeneradorNomenclatura } from "@/components/GeneradorNomenclatura";
 import { FormularioComparacionBorrador } from "@/components/FormularioComparacionBorrador";
 import { FormularioComparacionReferencia } from "@/components/FormularioComparacionReferencia";
 import { PanelRMDVigente } from "@/components/PanelRMDVigente";
@@ -13,6 +12,7 @@ import { ModalVisorBorrador } from "@/components/ModalVisorBorrador";
 import { PanelReglas } from "@/components/PanelReglas";
 import { PanelDocumentosObsoletos } from "@/components/PanelDocumentosObsoletos";
 import { PanelEquiposCalificados } from "@/components/PanelEquiposCalificados";
+import { PanelNomenclaturas } from "@/components/PanelNomenclaturas";
 import { ToggleTema } from "@/components/ui/ToggleTema";
 import { EstadoIA } from "@/components/EstadoIA";
 import { leerRespuestaApi } from "@/lib/leerRespuestaApi";
@@ -116,6 +116,7 @@ type VistaActual =
   | { tipo: "reglas" }
   | { tipo: "documentosObsoletos" }
   | { tipo: "equiposCalificados" }
+  | { tipo: "nomenclaturas" }
   | { tipo: "cargando"; mensaje: string }
   | { tipo: "error"; mensaje: string }
   // Muestra la sesión activa (ver sesionActivaId).
@@ -920,7 +921,11 @@ export default function Home() {
             <BotonConfig onClick={() => setVista({ tipo: "reglas" })} label="Reglas permanentes" />
             <BotonConfig
               onClick={() => setVista({ tipo: "documentosObsoletos" })}
-              label="Documentos obsoletos"
+              label="Documentos vigentes"
+            />
+            <BotonConfig
+              onClick={() => setVista({ tipo: "nomenclaturas" })}
+              label="Nomenclaturas"
             />
             <BotonConfig
               onClick={() => setVista({ tipo: "equiposCalificados" })}
@@ -943,12 +948,7 @@ export default function Home() {
         )}
         <div className="flex-1 overflow-y-auto">
           {modo === "control_cambios" ? (
-            <>
-              <div className="pt-7 sm:pt-10">
-                <GeneradorNomenclatura />
-              </div>
-              <FormularioCarga onIniciarRevision={iniciarRevision} cargando={false} />
-            </>
+            <FormularioCarga onIniciarRevision={iniciarRevision} cargando={false} />
           ) : modo === "borrador" ? (
             <FormularioComparacionBorrador
               onIniciarComparacion={iniciarComparacionBorrador}
@@ -981,6 +981,8 @@ export default function Home() {
     contenido = <PanelDocumentosObsoletos onVolver={() => setVista({ tipo: "carga" })} />;
   } else if (vista.tipo === "equiposCalificados") {
     contenido = <PanelEquiposCalificados onVolver={() => setVista({ tipo: "carga" })} />;
+  } else if (vista.tipo === "nomenclaturas") {
+    contenido = <PanelNomenclaturas onVolver={() => setVista({ tipo: "carga" })} />;
   } else if (vista.tipo === "cargando") {
     contenido = (
       <div className="h-pantalla flex items-center justify-center">

@@ -218,7 +218,7 @@ export function PanelDocumentosObsoletos({ onVolver }: Props) {
           ← Volver
         </button>
         <h1 className="min-w-0 truncate text-[13px] font-semibold text-ink sm:text-[14px]">
-          Documentos obsoletos
+          Documentos vigentes
         </h1>
       </div>
 
