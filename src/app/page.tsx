@@ -10,6 +10,7 @@ import { PanelDiferenciasBorrador } from "@/components/PanelDiferenciasBorrador"
 import { ModalVisorBorrador } from "@/components/ModalVisorBorrador";
 import { PanelReglas } from "@/components/PanelReglas";
 import { PanelDocumentosObsoletos } from "@/components/PanelDocumentosObsoletos";
+import { PanelEquiposCalificados } from "@/components/PanelEquiposCalificados";
 import { ToggleTema } from "@/components/ui/ToggleTema";
 import { EstadoIA } from "@/components/EstadoIA";
 import { leerRespuestaApi } from "@/lib/leerRespuestaApi";
@@ -91,6 +92,7 @@ type VistaActual =
   | { tipo: "carga" }
   | { tipo: "reglas" }
   | { tipo: "documentosObsoletos" }
+  | { tipo: "equiposCalificados" }
   | { tipo: "cargando"; mensaje: string }
   | { tipo: "error"; mensaje: string }
   // Muestra la sesión activa (ver sesionActivaId).
@@ -726,6 +728,10 @@ export default function Home() {
               onClick={() => setVista({ tipo: "documentosObsoletos" })}
               label="Documentos obsoletos"
             />
+            <BotonConfig
+              onClick={() => setVista({ tipo: "equiposCalificados" })}
+              label="Equipos calificados"
+            />
             <EstadoIA />
             <ToggleTema />
           </div>
@@ -774,6 +780,8 @@ export default function Home() {
     contenido = <PanelReglas onVolver={() => setVista({ tipo: "carga" })} />;
   } else if (vista.tipo === "documentosObsoletos") {
     contenido = <PanelDocumentosObsoletos onVolver={() => setVista({ tipo: "carga" })} />;
+  } else if (vista.tipo === "equiposCalificados") {
+    contenido = <PanelEquiposCalificados onVolver={() => setVista({ tipo: "carga" })} />;
   } else if (vista.tipo === "cargando") {
     contenido = (
       <div className="h-pantalla flex items-center justify-center">

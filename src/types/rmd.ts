@@ -164,6 +164,9 @@ export interface ResultadoRevisionIA {
   // documentosReferenciados que se pudo cruzar, por código — para mostrarlo
   // sutilmente junto a cada cita sin otra consulta desde el cliente.
   documentosVigentesInfo?: Record<string, InfoVigenciaDocumento>;
+  // Estado de calificación (maestro de equipos calificados) de cada código
+  // de equiposInstrumentos que se pudo cruzar, por código.
+  equiposCalificacionInfo?: Record<string, InfoCalificacionEquipo>;
 }
 
 // ---------- Comparación RMD vigente vs. borrador enviado por Producción ----------
@@ -217,6 +220,7 @@ export interface ResultadoComparacionBorrador {
   coincidenciaPorcentaje: number; // 0-100, qué tan parecidos son ambos documentos
   requiereRevisionHumana: boolean;
   documentosVigentesInfo?: Record<string, InfoVigenciaDocumento>;
+  equiposCalificacionInfo?: Record<string, InfoCalificacionEquipo>;
 }
 
 // ---------- Reglas permanentes de homologación ----------
@@ -276,6 +280,29 @@ export interface InfoVigenciaDocumento {
   titulo: string;
   vigenteHasta: string | null;
   vencido: boolean;
+}
+
+// ---------- Equipos calificados (maestro importado desde Excel) ----------
+// Estado de calificación (OQ/PQ) de cada equipo por su Código SAP, importado
+// en bloque desde la hoja "Cronograma" del Excel de Registro de Áreas/
+// Sistemas/Equipos a Calificar. Se cruza contra los códigos citados en la
+// sección EQUIPOS/INSTRUMENTOS/MATERIALES del RMD: "CALIFICADO" es lo
+// esperado, cualquier otro estado genera una alerta.
+
+export interface EquipoCalificado {
+  id: string;
+  codigoSap: string;
+  descripcion?: string | null;
+  estado: string; // ej. "CALIFICADO", "PENDIENTE", "EN PROCESO", "INOPERATIVO", "NO CUMPLE"
+  actualizadoEn?: string;
+}
+
+// Igual que InfoVigenciaDocumento pero para equipos: se adjunta al
+// resultado de la revisión para que la UI muestre el estado real sin otra
+// consulta desde el cliente.
+export interface InfoCalificacionEquipo {
+  estado: string;
+  calificado: boolean; // true sólo si estado === "CALIFICADO"
 }
 
 // ---------- Verificación de corrección (subir RMD corregido) ----------

@@ -11,6 +11,11 @@ import {
   construirInfoDocumentosVigentes,
   detectarDocumentosVencidosReferenciados,
 } from "@/lib/documentosVigentes";
+import {
+  cargarEquiposCalificadosPorCodigos,
+  construirInfoCalificacionEquipos,
+  detectarEquiposNoCalificadosReferenciados,
+} from "@/lib/equiposCalificados";
 import { extraerTextoPDF, parsearEstructuraRMD } from "@/lib/pdfExtractor";
 import type { RMDExtraido } from "@/types/rmd";
 
@@ -120,6 +125,23 @@ export async function POST(req: NextRequest) {
     resultadoIA.documentosVigentesInfo = construirInfoDocumentosVigentes(
       body.rmdVigente.documentosReferenciados,
       documentosVigentes
+    );
+
+    // 2d. Equipos calificados (maestro importado del Excel de OQ/PQ): cruce
+    //     determinístico contra los códigos citados en EQUIPOS/INSTRUMENTOS/
+    //     MATERIALES — "CALIFICADO" es lo esperado, cualquier otro estado alerta.
+    const codigosEquipos = body.rmdVigente.equiposInstrumentos.map((e) => e.codigo);
+    const equiposCalificados = await cargarEquiposCalificadosPorCodigos(supabase, codigosEquipos);
+    const alertasNoCalificados = detectarEquiposNoCalificadosReferenciados(
+      codigosEquipos,
+      equiposCalificados
+    );
+    if (alertasNoCalificados.length > 0) {
+      resultadoIA.alertasCoherencia = [...resultadoIA.alertasCoherencia, ...alertasNoCalificados];
+    }
+    resultadoIA.equiposCalificacionInfo = construirInfoCalificacionEquipos(
+      codigosEquipos,
+      equiposCalificados
     );
 
     // 3. Persistir la revisión (si no hay documentoId, se guarda igual como

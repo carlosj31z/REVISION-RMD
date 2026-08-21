@@ -16,6 +16,11 @@ import {
   construirInfoDocumentosVigentes,
   detectarDocumentosVencidosReferenciados,
 } from "@/lib/documentosVigentes";
+import {
+  cargarEquiposCalificadosPorCodigos,
+  construirInfoCalificacionEquipos,
+  detectarEquiposNoCalificadosReferenciados,
+} from "@/lib/equiposCalificados";
 import type { RMDExtraido } from "@/types/rmd";
 
 export const runtime = "nodejs";
@@ -161,6 +166,39 @@ export async function POST(req: NextRequest) {
     resultadoIA.documentosVigentesInfo = construirInfoDocumentosVigentes(
       [...body.rmdVigente.documentosReferenciados, ...(body.rmdBorrador?.documentosReferenciados ?? [])],
       documentosVigentes
+    );
+
+    // Equipos calificados (maestro importado del Excel de OQ/PQ): mismo
+    // cruce que en /api/revision, contra los códigos de EQUIPOS/
+    // INSTRUMENTOS/MATERIALES de ambos documentos si hay borrador.
+    const codigosEquipos = [
+      ...body.rmdVigente.equiposInstrumentos,
+      ...(body.rmdBorrador?.equiposInstrumentos ?? []),
+    ].map((e) => e.codigo);
+    const equiposCalificados = await cargarEquiposCalificadosPorCodigos(supabase, codigosEquipos);
+    const alertasNoCalificados = body.rmdBorrador
+      ? [
+          ...detectarEquiposNoCalificadosReferenciados(
+            body.rmdVigente.equiposInstrumentos.map((e) => e.codigo),
+            equiposCalificados,
+            "RMD vigente"
+          ),
+          ...detectarEquiposNoCalificadosReferenciados(
+            body.rmdBorrador.equiposInstrumentos.map((e) => e.codigo),
+            equiposCalificados,
+            "borrador de Producción"
+          ),
+        ]
+      : detectarEquiposNoCalificadosReferenciados(
+          body.rmdVigente.equiposInstrumentos.map((e) => e.codigo),
+          equiposCalificados
+        );
+    if (alertasNoCalificados.length > 0) {
+      resultadoIA.alertasCoherencia = [...resultadoIA.alertasCoherencia, ...alertasNoCalificados];
+    }
+    resultadoIA.equiposCalificacionInfo = construirInfoCalificacionEquipos(
+      codigosEquipos,
+      equiposCalificados
     );
 
     const advertenciasEquipos = resultadoIA.diferenciasDetectadas.filter(
