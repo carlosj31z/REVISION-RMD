@@ -13,15 +13,20 @@ function formatearFechaCorta(iso: string): string {
 interface Props {
   documentos: DocumentoReferenciado[];
   // Título + hasta cuándo vale cada código, según el maestro de documentos
-  // vigentes (ver /api/documentos-vigentes) — se muestra sutilmente como
-  // tooltip al pasar el mouse, y con un punto rojo si ya venció, en vez de
-  // ocupar espacio fijo en la lista compacta de chips.
+  // vigentes (ver /api/documentos-vigentes) — con un punto rojo si ya
+  // venció, en vez de ocupar espacio fijo en la lista compacta de chips.
   vigenciaInfo?: Record<string, InfoVigenciaDocumento>;
 }
 
 export function DocumentosReferenciados({ documentos, vigenciaInfo }: Props) {
   const [abierto, setAbierto] = useState(false);
+  // Clic (no sólo hover, que no existe en touch) para revelar el nombre del
+  // documento de forma sutil: una línea chica debajo de la lista, no un
+  // popover ni nada que tape el resto de la tarjeta.
+  const [codigoExpandido, setCodigoExpandido] = useState<string | null>(null);
   if (documentos.length === 0) return null;
+
+  const infoExpandida = codigoExpandido ? vigenciaInfo?.[codigoExpandido] : undefined;
 
   return (
     <div className="mb-5 rounded-lg border border-line bg-surface transition-shadow duration-200 hover:shadow-soft">
@@ -55,29 +60,31 @@ export function DocumentosReferenciados({ documentos, vigenciaInfo }: Props) {
                   <ul className="flex flex-wrap gap-1.5">
                     {items.map((d) => {
                       const info = vigenciaInfo?.[d.codigo];
-                      const titulo = info
-                        ? `${info.titulo}${
-                            info.vigenteHasta
-                              ? info.vencido
-                                ? ` — venció el ${formatearFechaCorta(info.vigenteHasta)}`
-                                : ` — vigente hasta ${formatearFechaCorta(info.vigenteHasta)}`
-                              : ""
-                          }`
-                        : undefined;
+                      const activo = codigoExpandido === d.codigo;
                       return (
-                        <li
-                          key={d.codigo}
-                          title={titulo}
-                          className={`flex items-center gap-1 rounded-full border px-2.5 py-1 font-mono text-[11px] transition-colors duration-150 ${
-                            info?.vencido
-                              ? "border-severidad-critica/40 bg-severidad-criticaTint text-severidad-critica hover:border-severidad-critica/70"
-                              : "border-line bg-paper text-ink/80 hover:border-system/50"
-                          }`}
-                        >
-                          {info?.vencido && (
-                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-severidad-critica" aria-hidden="true" />
-                          )}
-                          {d.codigo}
+                        <li key={d.codigo}>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCodigoExpandido((actual) => (actual === d.codigo ? null : d.codigo))
+                            }
+                            title="Ver nombre del documento"
+                            className={`flex items-center gap-1 rounded-full border px-2.5 py-1 font-mono text-[11px] transition-colors duration-150 ${
+                              info?.vencido
+                                ? "border-severidad-critica/40 bg-severidad-criticaTint text-severidad-critica hover:border-severidad-critica/70"
+                                : activo
+                                  ? "border-system/60 bg-system-tint text-system"
+                                  : "border-line bg-paper text-ink/80 hover:border-system/50"
+                            }`}
+                          >
+                            {info?.vencido && (
+                              <span
+                                className="h-1.5 w-1.5 shrink-0 rounded-full bg-severidad-critica"
+                                aria-hidden="true"
+                              />
+                            )}
+                            {d.codigo}
+                          </button>
                         </li>
                       );
                     })}
@@ -85,6 +92,26 @@ export function DocumentosReferenciados({ documentos, vigenciaInfo }: Props) {
                 </div>
               );
             })}
+            {codigoExpandido && (
+              <p className="animate-fade-in-up rounded-lg border border-line bg-paper px-2.5 py-2 text-[11.5px] leading-snug text-muted">
+                <span className="font-mono font-medium text-ink/80">{codigoExpandido}</span>
+                {infoExpandida ? (
+                  <>
+                    {" — "}
+                    {infoExpandida.titulo}
+                    {infoExpandida.vigenteHasta && (
+                      <span className={infoExpandida.vencido ? "text-severidad-critica" : ""}>
+                        {infoExpandida.vencido
+                          ? ` (venció el ${formatearFechaCorta(infoExpandida.vigenteHasta)})`
+                          : ` (vigente hasta ${formatearFechaCorta(infoExpandida.vigenteHasta)})`}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  " — sin información en el maestro de documentos vigentes."
+                )}
+              </p>
+            )}
           </div>
         </div>
       </div>

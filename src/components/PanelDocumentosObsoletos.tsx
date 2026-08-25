@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import type { DocumentoObsoleto } from "@/types/rmd";
+import type { DocumentoObsoleto, DocumentoVigente } from "@/types/rmd";
 import { leerRespuestaApi } from "@/lib/leerRespuestaApi";
 
 interface Props {
@@ -11,6 +11,121 @@ interface Props {
 interface ResumenVigentes {
   total: number;
   actualizadoEn: string | null;
+}
+
+function formatearFecha(iso?: string | null): string {
+  if (!iso) return "—";
+  const [anio, mes, dia] = iso.split("-");
+  return `${dia}/${mes}/${anio}`;
+}
+
+/**
+ * Detalle "si el usuario quiere" del maestro: nunca lista las ~3300 filas de
+ * una (ver /api/documentos-vigentes/buscar), sólo busca por código o título
+ * a pedido. Colapsado por defecto — la carga del Excel de arriba es la
+ * acción principal de este panel.
+ */
+function BuscadorDocumentosVigentes({ total }: { total: number }) {
+  const [abierto, setAbierto] = useState(false);
+  const [termino, setTermino] = useState("");
+  const [resultados, setResultados] = useState<DocumentoVigente[]>([]);
+  const [buscando, setBuscando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [limite, setLimite] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!abierto || termino.trim().length < 2) {
+      setResultados([]);
+      setError(null);
+      return;
+    }
+    const controlador = new AbortController();
+    const timeout = setTimeout(async () => {
+      setBuscando(true);
+      setError(null);
+      try {
+        const res = await fetch(`/api/documentos-vigentes/buscar?q=${encodeURIComponent(termino.trim())}`, {
+          cache: "no-store",
+          signal: controlador.signal,
+        });
+        const data = await leerRespuestaApi(res);
+        if (!res.ok) throw new Error(data.error ?? "No se pudo buscar.");
+        setResultados(data.documentos);
+        setLimite(data.limite ?? null);
+      } catch (err: any) {
+        if (err.name !== "AbortError") setError(err.message ?? "No se pudo buscar.");
+      } finally {
+        setBuscando(false);
+      }
+    }, 300);
+    return () => {
+      clearTimeout(timeout);
+      controlador.abort();
+    };
+  }, [abierto, termino]);
+
+  if (total === 0) return null;
+
+  return (
+    <div className="mt-3 border-t border-line pt-3">
+      <button
+        type="button"
+        onClick={() => setAbierto((v) => !v)}
+        className="text-[12px] font-medium text-system hover:underline"
+      >
+        {abierto ? "Ocultar buscador" : `Ver detalle de los ${total} documentos cargados`}
+      </button>
+
+      {abierto && (
+        <div className="mt-2.5 animate-fade-in-up">
+          <input
+            value={termino}
+            onChange={(e) => setTermino(e.target.value)}
+            placeholder="Buscar por código o título (ej. IPRO-P200, esterilización)…"
+            className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-[13px] text-ink placeholder:text-muted/60 transition-all duration-150 ease-spring focus:border-system focus:shadow-ring focus:outline-none"
+          />
+
+          {error && <p className="mt-2 text-[12px] text-severidad-critica">{error}</p>}
+
+          {termino.trim().length >= 2 && (
+            <div className="mt-2 max-h-80 overflow-y-auto rounded-lg border border-line">
+              {buscando ? (
+                <p className="px-3 py-3 text-[12px] text-muted">Buscando…</p>
+              ) : resultados.length === 0 ? (
+                <p className="px-3 py-3 text-[12px] text-muted">Sin resultados.</p>
+              ) : (
+                <table className="w-full text-left text-[12px]">
+                  <thead className="sticky top-0 bg-paper text-[10px] uppercase tracking-wide text-muted">
+                    <tr>
+                      <th className="px-2.5 py-1.5 font-semibold">Código</th>
+                      <th className="px-2.5 py-1.5 font-semibold">Título</th>
+                      <th className="px-2.5 py-1.5 font-semibold">Vigente hasta</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resultados.map((d) => (
+                      <tr key={d.id} className="border-t border-line">
+                        <td className="whitespace-nowrap px-2.5 py-1.5 font-mono text-ink/80">{d.codigo}</td>
+                        <td className="px-2.5 py-1.5 text-ink/80">{d.titulo}</td>
+                        <td className="whitespace-nowrap px-2.5 py-1.5 text-muted">
+                          {formatearFecha(d.vigenteHasta)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+          {limite != null && resultados.length === limite && (
+            <p className="mt-1.5 text-[11px] text-muted">
+              Se muestran los primeros {limite} resultados — afiná la búsqueda para ver menos.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ImportadorDocumentosVigentes() {
@@ -114,6 +229,8 @@ function ImportadorDocumentosVigentes() {
         <p className="mt-2.5 text-[12.5px] text-severidad-baja">✓ {resultado}</p>
       )}
       {error && <p className="mt-2.5 text-[12.5px] text-severidad-critica">{error}</p>}
+
+      <BuscadorDocumentosVigentes total={resumen?.total ?? 0} />
     </div>
   );
 }
