@@ -21,6 +21,11 @@ import {
   itemsDesdeResultadoRevision,
   itemsDesdeResultadoBorrador,
 } from "@/lib/exportarInformeCorrecciones";
+import {
+  guardarSesion,
+  eliminarSesion,
+  cargarSesionesGuardadas,
+} from "@/lib/persistenciaSesiones";
 import type { SaltoPdf } from "@/components/VisorPdf";
 import type {
   RMDExtraido,
@@ -37,7 +42,7 @@ type EstadoSeguimiento = "pendiente" | "corregido_en_sap" | "descartado";
 // homologación contra otro RMD (ver compararRMDvsReferencia en gemini.ts).
 type ModoEntrada = "revisar" | "borrador" | "referencia" | "control_cambios";
 
-type VistaResultado =
+export type VistaResultado =
   | {
       tipo: "resultado";
       rmd: RMDExtraido;
@@ -101,11 +106,15 @@ type VistaResultado =
  * (estadosSeguimiento) y la verificación automática viven DENTRO de la
  * sesión y no en un estado global compartido.
  *
- * Ojo: los PDF se guardan como blob URL, que solo existe mientras viva la
- * pestaña. Por eso las sesiones no se pueden persistir en localStorage ni
- * sobrevivir a un recargado — de ahí la advertencia al usuario.
+ * pdfUrl/pdfBorradorUrl/pdfReferenciaUrl son blob URL, que sólo existen
+ * mientras vive la pestaña — nunca se persisten. Lo que SÍ se guarda en
+ * IndexedDB (ver lib/persistenciaSesiones.ts) son los archivos originales
+ * (archivoVigente/archivoBorrador/archivoReferencia) y el resto del estado;
+ * al recargar, o si el navegador descarta la pestaña por estar mucho tiempo
+ * en segundo plano, la sesión se reconstruye entera desde ahí, regenerando
+ * las blob URL a partir de los archivos guardados.
  */
-interface SesionRevision {
+export interface SesionRevision {
   id: string;
   vista: VistaResultado;
   estadosSeguimiento: Record<string, EstadoSeguimiento>;
@@ -148,6 +157,22 @@ async function fileToBase64(file: File): Promise<string> {
   return btoa(binary);
 }
 
+/** Extrae un PDF vía /api/extract-pdf. Se separó de los flujos que la usan
+ *  (iniciarComparacionBorrador, iniciarComparacionReferencia) para poder
+ *  pedir dos documentos EN PARALELO con Promise.all — son independientes
+ *  entre sí, así que esperarlos uno tras otro sólo suma tiempo sin motivo,
+ *  sobre todo cuando alguno necesita OCR. */
+async function extraerRMD(file: File, etiqueta: string): Promise<any> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch("/api/extract-pdf", { method: "POST", body: formData });
+  if (!res.ok) {
+    const err = await leerRespuestaApi(res);
+    throw new Error(err.error ?? `No se pudo extraer el PDF de ${etiqueta}.`);
+  }
+  return leerRespuestaApi(res);
+}
+
 export default function Home() {
   const [modo, setModo] = useState<ModoEntrada>("revisar");
   const [vista, setVista] = useState<VistaActual>({ tipo: "carga" });
@@ -172,6 +197,29 @@ export default function Home() {
   const [sesiones, setSesiones] = useState<SesionRevision[]>([]);
   const [sesionActivaId, setSesionActivaId] = useState<string | null>(null);
   const [listaSesionesAbierta, setListaSesionesAbierta] = useState(false);
+  // Cuántas sesiones se recuperaron de IndexedDB al abrir la app (ver
+  // lib/persistenciaSesiones.ts) — null mientras no se terminó de consultar,
+  // 0 si no había ninguna. Sólo sirve para el aviso de abajo, una vez.
+  const [sesionesRestauradas, setSesionesRestauradas] = useState<number | null>(null);
+
+  // Recupera las revisiones que quedaron guardadas de una sesión anterior
+  // del navegador (recargado, pestaña descartada por inactividad, etc.) —
+  // regenera las blob URL de cada PDF a partir del File persistido. Corre
+  // una sola vez al montar.
+  useEffect(() => {
+    let cancelado = false;
+    cargarSesionesGuardadas().then((restauradas) => {
+      if (cancelado || restauradas.length === 0) {
+        setSesionesRestauradas(0);
+        return;
+      }
+      setSesiones(restauradas);
+      setSesionesRestauradas(restauradas.length);
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, []);
 
   // Verificación automática al subir el RMD ya corregido en SAP: por cada
   // observación original (misma clave que estadosSeguimiento) guarda si la
@@ -183,8 +231,11 @@ export default function Home() {
   const sesionActiva = sesiones.find((s) => s.id === sesionActivaId) ?? null;
   const sesionesEnProceso = sesiones.filter((s) => !s.finalizada);
 
-  // Los PDF viven como blob URL, que muere con la pestaña: no hay forma de
-  // restaurar una revisión tras recargar. Avisamos antes de perder trabajo.
+  // Las sesiones ya se guardan en IndexedDB (ver arriba), pero ese guardado
+  // es asíncrono y "fire and forget" — cerrar/recargar la pestaña en el
+  // instante exacto de un cambio todavía podría cortarlo a mitad de camino.
+  // Se mantiene el aviso como red de seguridad, aunque ya no sea la única
+  // forma de no perder el trabajo.
   useEffect(() => {
     if (sesionesEnProceso.length === 0) return;
     const alSalir = (e: BeforeUnloadEvent) => {
@@ -197,7 +248,15 @@ export default function Home() {
 
   const actualizarSesion = useCallback(
     (id: string, cambio: (s: SesionRevision) => SesionRevision) => {
-      setSesiones((prev) => prev.map((s) => (s.id === id ? cambio(s) : s)));
+      setSesiones((prev) => {
+        const siguiente = prev.map((s) => (s.id === id ? cambio(s) : s));
+        // Persiste sólo la sesión que cambió, no todo el array — cubre
+        // cambiarEstadoSeguimiento, subirRmdCorregido, alternarFinalizada y
+        // la recuperación de blob inválido, que ya pasan todos por acá.
+        const actualizada = siguiente.find((s) => s.id === id);
+        if (actualizada) guardarSesion(actualizada);
+        return siguiente;
+      });
     },
     []
   );
@@ -266,17 +325,16 @@ export default function Home() {
       typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
         : `sesion-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    setSesiones((prev) => [
-      ...prev,
-      {
-        id,
-        vista: vistaResultado,
-        estadosSeguimiento: {},
-        verificacionCorreccion: {},
-        finalizada: false,
-        creadaEn: Date.now(),
-      },
-    ]);
+    const nuevaSesion: SesionRevision = {
+      id,
+      vista: vistaResultado,
+      estadosSeguimiento: {},
+      verificacionCorreccion: {},
+      finalizada: false,
+      creadaEn: Date.now(),
+    };
+    setSesiones((prev) => [...prev, nuevaSesion]);
+    guardarSesion(nuevaSesion);
     setSesionActivaId(id);
     setSaltoPdf(null);
     setModalBorrador(null);
@@ -296,21 +354,17 @@ export default function Home() {
       try {
         setVista({ tipo: "cargando", mensaje: "Extrayendo el RMD vigente…" });
 
-        const formData = new FormData();
-        formData.append("file", input.rmdFile);
-        const extractRes = await fetch("/api/extract-pdf", { method: "POST", body: formData });
-        if (!extractRes.ok) {
-          const err = await leerRespuestaApi(extractRes);
-          throw new Error(err.error ?? "No se pudo extraer el PDF del RMD vigente.");
-        }
-        const { estructura, pdfBase64 } = await leerRespuestaApi(extractRes);
+        // La conversión a base64 del Control de Cambio es local (no pega al
+        // servidor) e independiente de extraerRMD: se piden juntas en vez de
+        // una tras otra, aunque acá la ganancia real es chica (la conversión
+        // local es rápida frente a la extracción del RMD en el servidor).
+        const [datos, pdfControlCambioBase64] = await Promise.all([
+          extraerRMD(input.rmdFile, "el RMD vigente"),
+          input.controlCambioFile ? fileToBase64(input.controlCambioFile) : Promise.resolve(undefined),
+        ]);
+        const { estructura, pdfBase64 } = datos;
 
         setVista({ tipo: "cargando", mensaje: "Comparando contra el Control de Cambio…" });
-
-        let pdfControlCambioBase64: string | undefined;
-        if (input.controlCambioFile) {
-          pdfControlCambioBase64 = await fileToBase64(input.controlCambioFile);
-        }
 
         const revisionRes = await fetch("/api/revision", {
           method: "POST",
@@ -366,22 +420,10 @@ export default function Home() {
       try {
         setVista({
           tipo: "cargando",
-          mensaje: `Extrayendo ${etiquetaPrimerDocumento}… (si es un escaneo, hay que leerlo con IA y puede tardar unos minutos)`,
+          mensaje: input.rmdBorradorFile
+            ? `Extrayendo ambos documentos… (si alguno es un escaneo, hay que leerlo con IA y puede tardar unos minutos)`
+            : `Extrayendo ${etiquetaPrimerDocumento}… (si es un escaneo, hay que leerlo con IA y puede tardar unos minutos)`,
         });
-
-        const formDataVigente = new FormData();
-        formDataVigente.append("file", input.rmdVigenteFile);
-        const extractVigenteRes = await fetch("/api/extract-pdf", {
-          method: "POST",
-          body: formDataVigente,
-        });
-        if (!extractVigenteRes.ok) {
-          const err = await leerRespuestaApi(extractVigenteRes);
-          throw new Error(err.error ?? `No se pudo extraer el PDF de ${etiquetaPrimerDocumento}.`);
-        }
-        const datosVigente = await leerRespuestaApi(extractVigenteRes);
-        const estructuraVigente = datosVigente.estructura;
-        const pdfVigenteBase64 = datosVigente.pdfBase64;
 
         // Documentos escaneados: la estructura se reconstruyó leyendo el PDF
         // con IA, así que conviene que el analista lo sepa (y sepa cuándo NO
@@ -398,28 +440,24 @@ export default function Home() {
             avisos.push(`${etiqueta}: ${datos.avisoExtraccion}`);
           }
         };
+
+        // Los dos PDF son independientes entre sí (cada uno se extrae por su
+        // cuenta): pedirlos en paralelo en vez de uno tras otro corta a la
+        // mitad esa espera cuando ambos necesitan OCR.
+        const [datosVigente, datosBorrador] = await Promise.all([
+          extraerRMD(input.rmdVigenteFile, etiquetaPrimerDocumento),
+          input.rmdBorradorFile
+            ? extraerRMD(input.rmdBorradorFile, "El borrador de Producción")
+            : Promise.resolve(null),
+        ]);
+
+        const estructuraVigente = datosVigente.estructura;
+        const pdfVigenteBase64 = datosVigente.pdfBase64;
         registrarAviso(datosVigente, etiquetaPrimerDocumento);
 
-        let estructuraBorrador: any = null;
-        let pdfBorradorBase64: string | undefined;
-        if (input.rmdBorradorFile) {
-          setVista({ tipo: "cargando", mensaje: "Extrayendo el borrador de Producción…" });
-
-          const formDataBorrador = new FormData();
-          formDataBorrador.append("file", input.rmdBorradorFile);
-          const extractBorradorRes = await fetch("/api/extract-pdf", {
-            method: "POST",
-            body: formDataBorrador,
-          });
-          if (!extractBorradorRes.ok) {
-            const err = await leerRespuestaApi(extractBorradorRes);
-            throw new Error(err.error ?? "No se pudo extraer el PDF del borrador.");
-          }
-          const data = await leerRespuestaApi(extractBorradorRes);
-          estructuraBorrador = data.estructura;
-          pdfBorradorBase64 = data.pdfBase64;
-          registrarAviso(data, "El borrador de Producción");
-        }
+        const estructuraBorrador = datosBorrador?.estructura ?? null;
+        const pdfBorradorBase64 = datosBorrador?.pdfBase64;
+        if (datosBorrador) registrarAviso(datosBorrador, "El borrador de Producción");
 
         const esCorregido = input.variante === "corregido";
         setVista({
@@ -481,19 +519,8 @@ export default function Home() {
       try {
         setVista({
           tipo: "cargando",
-          mensaje: "Extrayendo el RMD a evaluar… (si es un escaneo, hay que leerlo con IA y puede tardar unos minutos)",
+          mensaje: "Extrayendo ambos documentos… (si alguno es un escaneo, hay que leerlo con IA y puede tardar unos minutos)",
         });
-
-        const formDataRmd = new FormData();
-        formDataRmd.append("file", input.rmdFile);
-        const extractRes = await fetch("/api/extract-pdf", { method: "POST", body: formDataRmd });
-        if (!extractRes.ok) {
-          const err = await leerRespuestaApi(extractRes);
-          throw new Error(err.error ?? "No se pudo extraer el PDF del RMD a evaluar.");
-        }
-        const datos = await leerRespuestaApi(extractRes);
-        const estructura = datos.estructura;
-        const pdfBase64 = datos.pdfBase64;
 
         const avisos: string[] = [];
         const registrarAviso = (d: any, etiqueta: string) => {
@@ -507,20 +534,17 @@ export default function Home() {
             avisos.push(`${etiqueta}: ${d.avisoExtraccion}`);
           }
         };
+
+        // Ambos documentos son independientes: pedirlos en paralelo corta a
+        // la mitad la espera cuando alguno necesita OCR.
+        const [datos, datosReferencia] = await Promise.all([
+          extraerRMD(input.rmdFile, "el RMD a evaluar"),
+          extraerRMD(input.rmdReferenciaFile, "el RMD de referencia"),
+        ]);
+        const estructura = datos.estructura;
+        const pdfBase64 = datos.pdfBase64;
         registrarAviso(datos, "El RMD a evaluar");
 
-        setVista({ tipo: "cargando", mensaje: "Extrayendo el RMD de referencia…" });
-        const formDataReferencia = new FormData();
-        formDataReferencia.append("file", input.rmdReferenciaFile);
-        const extractReferenciaRes = await fetch("/api/extract-pdf", {
-          method: "POST",
-          body: formDataReferencia,
-        });
-        if (!extractReferenciaRes.ok) {
-          const err = await leerRespuestaApi(extractReferenciaRes);
-          throw new Error(err.error ?? "No se pudo extraer el PDF del RMD de referencia.");
-        }
-        const datosReferencia = await leerRespuestaApi(extractReferenciaRes);
         const estructuraReferencia = datosReferencia.estructura;
         const pdfReferenciaBase64 = datosReferencia.pdfBase64;
         registrarAviso(datosReferencia, "El RMD de referencia");
@@ -904,6 +928,7 @@ export default function Home() {
 
   const cerrarSesion = useCallback(
     (id: string) => {
+      eliminarSesion(id);
       setSesiones((prev) => {
         const s = prev.find((x) => x.id === id);
         if (s) liberarPdfs(s.vista);
@@ -988,14 +1013,30 @@ export default function Home() {
             <ToggleTema />
           </div>
         </div>
+        {!!sesionesRestauradas && (
+          <div className="inset-seguro-x flex items-center justify-between gap-3 border-b border-system/20 bg-system-tint px-4 py-2 sm:px-5">
+            <p className="text-[12px] leading-relaxed text-system">
+              Se restauraron {sesionesRestauradas}{" "}
+              {sesionesRestauradas === 1 ? "revisión" : "revisiones"} que tenías abierta
+              {sesionesRestauradas === 1 ? "" : "s"} en este dispositivo.
+            </p>
+            <button
+              onClick={() => setSesionesRestauradas(0)}
+              className="shrink-0 rounded px-1.5 py-0.5 text-[12px] text-system/70 transition-colors hover:bg-surface/50 hover:text-system"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         {sesionesEnProceso.length > 0 && (
           <div className="inset-seguro-x border-b border-severidad-alta/20 bg-severidad-altaTint px-4 py-2 sm:px-5">
             <p className="text-[12px] leading-relaxed text-severidad-alta">
               Tenés {sesionesEnProceso.length}{" "}
-              {sesionesEnProceso.length === 1 ? "revisión" : "revisiones"} en proceso. Se
-              mantienen abiertas mientras no cierres ni recargues esta pestaña —{" "}
-              <strong className="font-semibold">al recargar se pierden</strong>, porque los PDF
-              solo viven en la sesión del navegador.
+              {sesionesEnProceso.length === 1 ? "revisión" : "revisiones"} en proceso. Se guardan
+              automáticamente en este dispositivo (sobreviven a recargar la página o a que el
+              navegador descarte la pestaña), pero{" "}
+              <strong className="font-semibold">sólo en este navegador y este equipo</strong> — no
+              se sincronizan a otro dispositivo ni a la nube.
             </p>
           </div>
         )}
