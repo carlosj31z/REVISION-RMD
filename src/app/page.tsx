@@ -16,6 +16,11 @@ import { PanelNomenclaturas } from "@/components/PanelNomenclaturas";
 import { ToggleTema } from "@/components/ui/ToggleTema";
 import { EstadoIA } from "@/components/EstadoIA";
 import { leerRespuestaApi } from "@/lib/leerRespuestaApi";
+import {
+  generarInformeCorrecciones,
+  itemsDesdeResultadoRevision,
+  itemsDesdeResultadoBorrador,
+} from "@/lib/exportarInformeCorrecciones";
 import type { SaltoPdf } from "@/components/VisorPdf";
 import type {
   RMDExtraido,
@@ -173,6 +178,7 @@ export default function Home() {
   // IA confirmó que el documento corregido ya la resuelve.
   const [verificandoCorreccion, setVerificandoCorreccion] = useState(false);
   const [errorVerificacion, setErrorVerificacion] = useState<string | null>(null);
+  const [exportandoInforme, setExportandoInforme] = useState(false);
 
   const sesionActiva = sesiones.find((s) => s.id === sesionActivaId) ?? null;
   const sesionesEnProceso = sesiones.filter((s) => !s.finalizada);
@@ -683,6 +689,53 @@ export default function Home() {
     [sesionActiva, cambiarEstadoSeguimiento, actualizarSesion]
   );
 
+  /**
+   * Arma y descarga el PDF de correcciones de la sesión activa (ver
+   * lib/exportarInformeCorrecciones.ts): cada hallazgo con su ubicación,
+   * cita y una captura del PDF resaltada — sin el resumen ejecutivo, que no
+   * pidió el usuario. Sólo aplica a "resultado" y "resultado-borrador" (los
+   * dos tipos que representan correcciones a aplicar); "resultado-referencia"
+   * son sugerencias de homologación, un caso distinto que no se pidió cubrir.
+   */
+  const exportarInforme = useCallback(async () => {
+    if (!sesionActiva) return;
+    const vr = sesionActiva.vista;
+    if (vr.tipo !== "resultado" && vr.tipo !== "resultado-borrador") return;
+
+    setExportandoInforme(true);
+    setErrorVerificacion(null);
+    try {
+      const items =
+        vr.tipo === "resultado"
+          ? itemsDesdeResultadoRevision(vr.resultado)
+          : itemsDesdeResultadoBorrador(vr.resultado);
+
+      if (items.length === 0) {
+        throw new Error("Esta revisión no tiene correcciones ni alertas para exportar.");
+      }
+
+      const nombreArchivoSeguro = `${vr.rmd.encabezado.codigo || "RMD"}-correcciones`.replace(
+        /[^\w-]+/g,
+        "_"
+      );
+
+      await generarInformeCorrecciones({
+        nombreArchivo: `${nombreArchivoSeguro}.pdf`,
+        titulo: `${vr.rmd.encabezado.producto || "RMD"} — ${vr.rmd.encabezado.codigo || ""}`.trim(),
+        subtitulo:
+          (vr.tipo === "resultado" ? "Control de Cambio" : "Comparación con Borrador") +
+          ` · ${items.length} ${items.length === 1 ? "hallazgo" : "hallazgos"}`,
+        items,
+        archivoPdf: vr.archivoVigente,
+        rmd: vr.rmd,
+      });
+    } catch (err: any) {
+      setErrorVerificacion(err.message ?? "No se pudo exportar el informe.");
+    } finally {
+      setExportandoInforme(false);
+    }
+  }, [sesionActiva]);
+
   const irAPasoEnPdf = useCallback(
     (destino: DestinoPdf) => {
       if (!sesionActiva) return;
@@ -1058,10 +1111,20 @@ export default function Home() {
           </div>
           <div className="scroll-x-limpio toque flex shrink-0 items-center gap-1 sm:overflow-visible">
             {vr.tipo !== "resultado-referencia" && (
-              <BotonSubirCorregido
-                verificando={verificandoCorreccion}
-                onSeleccionar={subirRmdCorregido}
-              />
+              <>
+                <BotonSubirCorregido
+                  verificando={verificandoCorreccion}
+                  onSeleccionar={subirRmdCorregido}
+                />
+                <button
+                  onClick={exportarInforme}
+                  disabled={exportandoInforme}
+                  title="Descargar un PDF con las correcciones detectadas, cada una con su ubicación y una captura resaltada del punto exacto"
+                  className="shrink-0 whitespace-nowrap rounded border border-line px-2.5 py-1 text-[12px] font-medium text-muted transition-all duration-150 ease-spring hover:border-system hover:text-system active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {exportandoInforme ? "Generando…" : "⬇ Exportar PDF"}
+                </button>
+              </>
             )}
             <button
               onClick={() => alternarFinalizada(sesionActiva.id)}
