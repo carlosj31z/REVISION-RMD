@@ -9,6 +9,7 @@ import { getSupabaseServerClient } from "@/lib/supabaseClient";
 import { cargarReglasAplicables } from "@/lib/reglas";
 import { aDiferenciasBorrador, detectarTerminosSinHomologar, separarReglas } from "@/lib/reglasReemplazo";
 import { diferenciasMecanicas, fusionarConMecanicas } from "@/lib/comparadorRmd/borrador";
+import { detectarAlertasCoherencia } from "@/lib/coherenciaRmd";
 import { decidirAdjuntarPdfRmd } from "@/lib/adjuntarPdf";
 import { buscarRevisionEnCache, huellaEntrada, huellaParaGuardar } from "@/lib/cacheRevisiones";
 import {
@@ -230,6 +231,19 @@ export async function POST(req: NextRequest) {
         ...resultadoIA.diferenciasDetectadas,
         ...terminosSinHomologar,
       ];
+    }
+
+    // Coherencia mecánica en cada documento: citas internas rotas, equipos sin
+    // preparación, notas de V°B° faltantes y cuadre de cantidades. El prompt ya
+    // no le pide nada de esto al modelo (ver coherenciaRmd.ts).
+    const alertasMecanicas = body.rmdBorrador
+      ? [
+          ...detectarAlertasCoherencia(body.rmdVigente, "RMD vigente"),
+          ...detectarAlertasCoherencia(body.rmdBorrador, "borrador de Producción"),
+        ]
+      : detectarAlertasCoherencia(body.rmdVigente);
+    if (alertasMecanicas.length > 0) {
+      resultadoIA.alertasCoherencia = [...resultadoIA.alertasCoherencia, ...alertasMecanicas];
     }
 
     // Documentos obsoletos: cruce determinístico. Si no hay borrador, solo

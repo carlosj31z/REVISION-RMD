@@ -3,6 +3,7 @@ import { compararRMDvsControlCambios, type EquipoMaestro } from "@/lib/gemini";
 import { getSupabaseServerClient } from "@/lib/supabaseClient";
 import { cargarReglasAplicables } from "@/lib/reglas";
 import { aDiscrepancias, detectarTerminosSinHomologar, separarReglas } from "@/lib/reglasReemplazo";
+import { detectarAlertasCoherencia } from "@/lib/coherenciaRmd";
 import {
   cargarDocumentosObsoletosActivos,
   detectarDocumentosObsoletosReferenciados,
@@ -172,6 +173,16 @@ export async function POST(req: NextRequest) {
         ...resultadoIA.discrepanciasDetectadas,
         ...aDiscrepancias(terminosSinHomologar),
       ];
+    }
+
+    // 2a-bis. Coherencia mecánica: citas internas a pasos inexistentes, equipos
+    //     listados que ningún paso prepara, notas de V°B° faltantes y cuadre de
+    //     cantidades de insumos. El prompt ya no le pide nada de esto al modelo
+    //     (ver coherenciaRmd.ts): son verificaciones que el código hace exactas
+    //     y siempre igual.
+    const alertasMecanicas = detectarAlertasCoherencia(body.rmdVigente);
+    if (alertasMecanicas.length > 0) {
+      resultadoIA.alertasCoherencia = [...resultadoIA.alertasCoherencia, ...alertasMecanicas];
     }
 
     // 2b. Documentos obsoletos: cruce determinístico (no depende del modelo)
