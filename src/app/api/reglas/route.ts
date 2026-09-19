@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseClient";
-import type { ReglaHomologacion, SeccionCodigo, EtapaCodigo } from "@/types/rmd";
+import type { ReglaHomologacion, SeccionCodigo, EtapaCodigo, TipoRegla } from "@/types/rmd";
 
 export const runtime = "nodejs";
 
@@ -13,6 +13,9 @@ function filaAregla(fila: any): ReglaHomologacion {
     activa: fila.activa,
     creadoPor: fila.creado_por ?? null,
     createdAt: fila.created_at,
+    tipo: fila.tipo ?? "libre",
+    terminoOrigen: fila.termino_origen ?? null,
+    terminoDestino: fila.termino_destino ?? null,
   };
 }
 
@@ -59,6 +62,11 @@ interface CrearReglaBody {
   seccionCodigo?: SeccionCodigo | null;
   etapaCodigo?: EtapaCodigo | null;
   creadoPor?: string;
+  // Una regla de reemplazo de término se verifica sin modelo, así que necesita
+  // los dos términos por separado en vez de sólo la frase que los describe.
+  tipo?: TipoRegla;
+  terminoOrigen?: string | null;
+  terminoDestino?: string | null;
 }
 
 export async function POST(req: NextRequest) {
@@ -66,6 +74,23 @@ export async function POST(req: NextRequest) {
     const body: CrearReglaBody = await req.json();
     if (!body.texto || !body.texto.trim()) {
       return NextResponse.json({ error: "Falta el texto de la regla." }, { status: 400 });
+    }
+
+    const tipo: TipoRegla = body.tipo === "reemplazo_termino" ? "reemplazo_termino" : "libre";
+    const terminoOrigen = body.terminoOrigen?.trim() || null;
+    const terminoDestino = body.terminoDestino?.trim() || null;
+    // La base tiene el mismo check, pero acá el error se puede explicar: una
+    // regla de reemplazo sin los dos términos sería una regla que el usuario
+    // cree activa y que nunca detecta nada.
+    if (tipo === "reemplazo_termino" && (!terminoOrigen || !terminoDestino)) {
+      return NextResponse.json(
+        {
+          error:
+            "Una regla de reemplazo de término necesita el término actual y el término correcto. " +
+            "Si sólo querés describir la regla en palabras, dejala como regla libre.",
+        },
+        { status: 400 }
+      );
     }
 
     const supabase = getSupabaseServerClient();
@@ -76,6 +101,9 @@ export async function POST(req: NextRequest) {
         seccion_codigo: body.seccionCodigo ?? null,
         etapa_codigo: body.etapaCodigo ?? null,
         creado_por: body.creadoPor ?? null,
+        tipo,
+        termino_origen: terminoOrigen,
+        termino_destino: terminoDestino,
       })
       .select()
       .single();

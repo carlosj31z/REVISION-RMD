@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { compararRMDvsControlCambios, type EquipoMaestro } from "@/lib/gemini";
 import { getSupabaseServerClient } from "@/lib/supabaseClient";
 import { cargarReglasAplicables } from "@/lib/reglas";
+import { aDiscrepancias, detectarTerminosSinHomologar, separarReglas } from "@/lib/reglasReemplazo";
+import { detectarAlertasCoherencia } from "@/lib/coherenciaRmd";
 import {
   cargarDocumentosObsoletosActivos,
   detectarDocumentosObsoletosReferenciados,
@@ -17,7 +19,10 @@ import {
   detectarEquiposNoCalificadosReferenciados,
 } from "@/lib/equiposCalificados";
 import { extraerTextoPDF, parsearEstructuraRMD } from "@/lib/pdfExtractor";
-import type { RMDExtraido } from "@/types/rmd";
+import { buscarRevisionEnCache, huellaEntrada, huellaParaGuardar } from "@/lib/cacheRevisiones";
+import { decidirAdjuntarPdfRmd } from "@/lib/adjuntarPdf";
+import { encolarSiElTiempoLoResuelve } from "@/lib/colaTrabajos";
+import type { RMDExtraido, ResultadoRevisionIA } from "@/types/rmd";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -31,15 +36,26 @@ interface RevisionRequestBody {
   seccionCodigo?: string;
   etapaCodigo?: string;
   creadoPor?: string;
+  // Análisis a fondo: adjunta el PDF al modelo aunque el parseo se vea
+  // completo (ver decidirAdjuntarPdfRmd). Cuesta bastante más cuota.
+  forzarPdf?: boolean;
+  // Lo pone el worker de la cola al reintentar un trabajo: le dice a esta ruta
+  // que si vuelve a fallar NO lo encole de nuevo, porque la reprogramación la
+  // lleva el worker (ver /api/trabajos/procesar).
+  _trabajoId?: string;
 }
 
 /**
  * POST /api/revision
  * Orquesta la comparación completa:
- *  1. Carga el maestro de equipos vigente desde Supabase (fuente de verdad).
- *  2. Llama a Gemini con el RMD vigente + Control de Cambio + maestro de equipos.
- *  3. Persiste el resultado en `revisiones`.
- *  4. Devuelve el resultado estructurado para la UI de Diff-Check.
+ *  1. Carga desde Supabase el maestro de equipos (fuente de verdad), las
+ *     reglas permanentes y los maestros de los cruces determinísticos.
+ *  2. Si esta misma entrada ya se analizó, devuelve el resultado guardado sin
+ *     gastar una llamada al modelo (ver cacheRevisiones.ts).
+ *  3. Si no, llama a Gemini con el RMD vigente + Control de Cambio + maestro
+ *     de equipos, adjuntando el PDF sólo si el parseo quedó corto.
+ *  4. Corre los cruces determinísticos y persiste el resultado en `revisiones`.
+ *  5. Devuelve el resultado estructurado para la UI de Diff-Check.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -83,21 +99,114 @@ export async function POST(req: NextRequest) {
     const equiposMaestro: EquipoMaestro[] = equiposData ?? [];
 
     // 1b. Reglas permanentes de homologación aplicables a esta sección/etapa.
+    //     Las de reemplazo de término se verifican por búsqueda de texto más
+    //     abajo, así que no se le mandan al modelo: sólo viajan al prompt las
+    //     que necesitan interpretación.
     const reglas = await cargarReglasAplicables(supabase, body.seccionCodigo, body.etapaCodigo);
+    const { libres: reglasLibres, reemplazos } = separarReglas(reglas);
 
-    // 2. Comparación con Gemini
-    const resultadoIA = await compararRMDvsControlCambios({
+    // 1c. Maestros de los cruces determinísticos. Se cargan ANTES de llamar
+    //     al modelo porque entran en la huella de la caché: si cambia un
+    //     maestro que este documento efectivamente usa, la revisión guardada
+    //     deja de servir y hay que rehacerla. Los cruces se corren más abajo.
+    const codigosDocumentos = body.rmdVigente.documentosReferenciados.map((d) => d.codigo);
+    const codigosEquipos = body.rmdVigente.equiposInstrumentos.map((e) => e.codigo);
+    const documentosObsoletos = await cargarDocumentosObsoletosActivos(supabase);
+    const documentosVigentes = await cargarDocumentosVigentesPorCodigos(
+      supabase,
+      codigosDocumentos
+    );
+    const equiposCalificados = await cargarEquiposCalificadosPorCodigos(supabase, codigosEquipos);
+
+    // 1d. El PDF crudo sólo se adjunta si el parseo quedó corto: es lo que más
+    //     cuota consume de cada llamada y aporta sólo cuando falta algo.
+    const decisionPdf = decidirAdjuntarPdfRmd(body.rmdVigente, body.forzarPdf);
+
+    // 1e. ¿Esta misma entrada ya se analizó? Entonces no se gasta cuota.
+    const huella = huellaEntrada({
+      operacion: "compararRMDvsControlCambios",
       rmdVigente: body.rmdVigente,
-      pdfVigenteBase64: body.pdfVigenteBase64,
-      controlDeCambioTexto: body.controlDeCambioTexto,
-      pdfControlCambioBase64: body.pdfControlCambioBase64,
+      controlDeCambioTexto: body.controlDeCambioTexto ?? null,
+      // El PDF del Control de Cambios puede ser la única fuente de su texto,
+      // así que su contenido es parte de la entrada.
+      pdfControlCambio: body.pdfControlCambioBase64 ?? null,
+      adjuntaPdfVigente: decisionPdf.adjuntar,
       equiposMaestro,
       reglas,
+      documentosObsoletos,
+      documentosVigentes,
+      equiposCalificados,
     });
+    const cacheado = await buscarRevisionEnCache<ResultadoRevisionIA>(
+      supabase,
+      "control_cambio",
+      huella,
+      "compararRMDvsControlCambios"
+    );
+
+    if (cacheado) {
+      // Los cruces determinísticos ya están dentro del resultado guardado, y
+      // la huella garantiza que ningún maestro que este documento use cambió
+      // desde entonces: devolverlo tal cual equivale a recalcular todo.
+      return NextResponse.json({
+        resultado: cacheado.resultado,
+        advertenciasEquipos: cacheado.resultado.discrepanciasDetectadas.filter(
+          (d) => d.involucraEquipoRetirado
+        ),
+        persistido: true,
+        revisionId: cacheado.revisionId,
+        desdeCache: true,
+        analizadoEn: cacheado.creadoEn,
+      });
+    }
+
+    // 2. Comparación con Gemini. Si los cinco proveedores están saturados o sin
+    //    cuota, el trabajo queda en cola con su entrada completa y se reintenta
+    //    solo, en vez de devolverle un error al analista (ver colaTrabajos.ts).
+    let resultadoIA: ResultadoRevisionIA;
+    try {
+      resultadoIA = await compararRMDvsControlCambios({
+        rmdVigente: body.rmdVigente,
+        pdfVigenteBase64: decisionPdf.adjuntar ? body.pdfVigenteBase64 : undefined,
+        controlDeCambioTexto: body.controlDeCambioTexto,
+        pdfControlCambioBase64: body.pdfControlCambioBase64,
+        equiposMaestro,
+        reglas: reglasLibres,
+      });
+    } catch (err) {
+      const encolado = await encolarSiElTiempoLoResuelve(supabase, err, {
+        operacion: "revision",
+        payload: body as unknown as Record<string, unknown>,
+        huella,
+        creadoPor: body.creadoPor,
+        yaEsReintento: Boolean(body._trabajoId),
+      });
+      if (encolado) return NextResponse.json({ encolado: true, ...encolado }, { status: 202 });
+      throw err;
+    }
+
+    // 2a. Reglas de reemplazo de término: búsqueda determinística, no depende
+    //     de que el modelo no se saltee ninguna.
+    const terminosSinHomologar = detectarTerminosSinHomologar(body.rmdVigente, reemplazos);
+    if (terminosSinHomologar.length > 0) {
+      resultadoIA.discrepanciasDetectadas = [
+        ...resultadoIA.discrepanciasDetectadas,
+        ...aDiscrepancias(terminosSinHomologar),
+      ];
+    }
+
+    // 2a-bis. Coherencia mecánica: citas internas a pasos inexistentes, equipos
+    //     listados que ningún paso prepara, notas de V°B° faltantes y cuadre de
+    //     cantidades de insumos. El prompt ya no le pide nada de esto al modelo
+    //     (ver coherenciaRmd.ts): son verificaciones que el código hace exactas
+    //     y siempre igual.
+    const alertasMecanicas = detectarAlertasCoherencia(body.rmdVigente);
+    if (alertasMecanicas.length > 0) {
+      resultadoIA.alertasCoherencia = [...resultadoIA.alertasCoherencia, ...alertasMecanicas];
+    }
 
     // 2b. Documentos obsoletos: cruce determinístico (no depende del modelo)
     //     entre lo citado en el RMD vigente y el maestro de obsoletos.
-    const documentosObsoletos = await cargarDocumentosObsoletosActivos(supabase);
     const alertasDocumentosObsoletos = detectarDocumentosObsoletosReferenciados(
       body.rmdVigente.documentosReferenciados,
       documentosObsoletos
@@ -111,10 +220,6 @@ export async function POST(req: NextRequest) {
 
     // 2c. Documentos vigentes (maestro importado del Excel): fuente
     //     PRINCIPAL de vigencia — ver detectarDocumentosVencidosReferenciados.
-    const documentosVigentes = await cargarDocumentosVigentesPorCodigos(
-      supabase,
-      body.rmdVigente.documentosReferenciados.map((d) => d.codigo)
-    );
     const alertasVencidos = detectarDocumentosVencidosReferenciados(
       body.rmdVigente.documentosReferenciados,
       documentosVigentes
@@ -130,8 +235,6 @@ export async function POST(req: NextRequest) {
     // 2d. Equipos calificados (maestro importado del Excel de OQ/PQ): cruce
     //     determinístico contra los códigos citados en EQUIPOS/INSTRUMENTOS/
     //     MATERIALES — "CALIFICADO" es lo esperado, cualquier otro estado alerta.
-    const codigosEquipos = body.rmdVigente.equiposInstrumentos.map((e) => e.codigo);
-    const equiposCalificados = await cargarEquiposCalificadosPorCodigos(supabase, codigosEquipos);
     const alertasNoCalificados = detectarEquiposNoCalificadosReferenciados(
       codigosEquipos,
       equiposCalificados
@@ -159,6 +262,7 @@ export async function POST(req: NextRequest) {
         score_coherencia: resultadoIA.scoreCoherencia,
         advertencias_equipos: advertenciasEquipos,
         creado_por: body.creadoPor ?? null,
+        ...(await huellaParaGuardar(supabase, huella)),
       })
       .select()
       .single();
@@ -180,6 +284,9 @@ export async function POST(req: NextRequest) {
       advertenciasEquipos,
       persistido: true,
       revisionId: revisionGuardada.id,
+      desdeCache: false,
+      pdfAdjuntado: decisionPdf.adjuntar,
+      motivoPdf: decisionPdf.motivo,
     });
   } catch (err: any) {
     console.error("Error en /api/revision:", err);

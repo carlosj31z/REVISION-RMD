@@ -247,6 +247,12 @@ export interface ResultadoComparacionBorrador {
 // futuras de la sección/etapa que indiquen, sin repetirlas en cada Control de
 // Cambios. seccionCodigo/etapaCodigo en null significa "aplica a todas".
 
+export type TipoRegla =
+  // Texto libre que necesita interpretación: va al prompt del modelo.
+  | "libre"
+  // "el término X se escribe Y": se aplica buscando el término, sin modelo.
+  | "reemplazo_termino";
+
 export interface ReglaHomologacion {
   id: string;
   texto: string;
@@ -255,6 +261,12 @@ export interface ReglaHomologacion {
   activa: boolean;
   creadoPor?: string | null;
   createdAt?: string;
+  // Una regla de reemplazo lleva los dos términos en columnas propias y se
+  // verifica de forma determinística (ver lib/reglasReemplazo.ts), así que no
+  // ocupa lugar en el prompt. "libre" es el comportamiento histórico.
+  tipo?: TipoRegla;
+  terminoOrigen?: string | null;
+  terminoDestino?: string | null;
 }
 
 // ---------- Documentos obsoletos ----------
@@ -337,6 +349,14 @@ export interface HallazgoAVerificar {
   id: number;
   ubicacionReferencia: string;
   descripcion: string;
+  // Paso al que estaba anclado el hallazgo y cita textual de lo observado.
+  // Son lo que permite verificar la corrección buscando el texto en el
+  // documento corregido, sin gastar una llamada al modelo (ver
+  // comparadorRmd/verificacion.ts). Opcionales porque un hallazgo puede
+  // aplicar a todo el documento o a una sección general, y ahí no hay nada
+  // que buscar.
+  pasoId?: string | null;
+  textoVigente?: string | null;
 }
 
 export interface VerificacionHallazgo {

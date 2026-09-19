@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extraerTextoPDF, parsearEstructuraRMD } from "@/lib/pdfExtractor";
 import { necesitaOCR, extraerEstructuraPorOCR } from "@/lib/ocrExtractor";
+import { getSupabaseServerClient } from "@/lib/supabaseClient";
+import {
+  buscarExtraccionOcr,
+  guardarExtraccionOcr,
+  huellaPdf,
+} from "@/lib/cacheExtraccion";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 // El OCR de un escaneo de ~12 páginas no entra en 60 s. Sólo se dispara
@@ -9,13 +16,27 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 /**
+ * El cliente de Supabase sólo para la caché de OCR. Devuelve null si Supabase
+ * no está configurado: la extracción tiene que seguir funcionando sin base, que
+ * es como funcionaba antes de existir esta caché.
+ */
+function supabaseParaCache(): SupabaseClient | null {
+  try {
+    return getSupabaseServerClient();
+  } catch {
+    return null;
+  }
+}
+
+/**
  * POST /api/extract-pdf
  * Recibe un PDF (multipart/form-data, campo "file") y devuelve:
  *  - la estructura RMD parseada (heurística, sección 6 excluida)
  *  - el texto plano completo (para depuración / fallback)
  *  - el PDF en base64 (para reenviarlo como respaldo visual a Gemini)
  *  - origenExtraccion: "texto" si salió del texto embebido, "ocr" si el PDF
- *    era un escaneo y hubo que reconstruir la estructura leyéndolo con IA.
+ *    era un escaneo y hubo que reconstruir la estructura leyéndolo con IA, o
+ *    "ocr_cache" si ese mismo archivo ya se había leído antes.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -39,7 +60,11 @@ export async function POST(req: NextRequest) {
     const buffer = await file.arrayBuffer();
     // Ojo: extraerTextoPDF() transfiere/"detacha" el ArrayBuffer al pasarlo a
     // pdf.js, así que hay que sacar el base64 ANTES de llamar a esa función.
-    const base64 = Buffer.from(buffer).toString("base64");
+    const contenido = Buffer.from(buffer);
+    const base64 = contenido.toString("base64");
+    // La huella se calcula ANTES de extraer, por lo mismo que el base64: acá el
+    // ArrayBuffer todavía existe.
+    const hashPdf = huellaPdf(contenido);
     const { texto: textoCompleto, paginaPorLinea, numPaginas } = await extraerTextoPDF(buffer);
 
     // Escaneo: sin capa de texto no hay nada que parsear. La estructura vacía
@@ -47,8 +72,31 @@ export async function POST(req: NextRequest) {
     // cruce de documentos obsoletos, a la navegación por paso del visor y al
     // cuadre de cantidades de insumos. Se reconstruye leyendo el PDF con IA.
     if (necesitaOCR(textoCompleto)) {
+      const supabase = supabaseParaCache();
+
+      // ¿Este mismo archivo ya pasó por OCR? Subir dos veces el mismo RMD es lo
+      // normal — una vez para revisarlo y otra para verificar la corrección — y
+      // el OCR de un escaneo es de lo más caro que hace el sistema.
+      if (supabase) {
+        const cacheado = await buscarExtraccionOcr(supabase, hashPdf);
+        if (cacheado) {
+          return NextResponse.json({
+            estructura: cacheado.estructura,
+            textoCompleto,
+            pdfBase64: base64,
+            nombreArchivo: file.name,
+            origenExtraccion: "ocr_cache",
+            pasosDetectados: cacheado.pasosDetectados,
+            desdeCache: true,
+          });
+        }
+      }
+
       try {
         const { estructura, pasosDetectados } = await extraerEstructuraPorOCR(base64, numPaginas);
+        if (supabase) {
+          await guardarExtraccionOcr(supabase, hashPdf, estructura, pasosDetectados, file.name);
+        }
         return NextResponse.json({
           estructura,
           textoCompleto,

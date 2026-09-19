@@ -23,6 +23,8 @@ interface RespuestaEstadoIA {
   desde?: string;
   actualizado?: string;
   proveedores: ProveedorEstado[];
+  /** Llamadas que no se hicieron porque la entrada ya estaba analizada. */
+  ahorradasPorCache?: number;
 }
 
 function nombreLegible(etiqueta: string): string {
@@ -203,6 +205,12 @@ export function EstadoIA() {
                   );
                 })}
               </ul>
+              {(estado.ahorradasPorCache ?? 0) > 0 && (
+                <p className="mt-2.5 rounded-lg border border-system/30 bg-system-tint px-2.5 py-1.5 text-[11px] leading-snug text-system">
+                  {estado.ahorradasPorCache} revisión(es) se resolvieron con el resultado ya
+                  guardado: esas llamadas no se hicieron.
+                </p>
+              )}
               <p className="mt-3 text-[10.5px] leading-snug text-muted/80">
                 Conteo propio desde medianoche UTC — Google no expone la cuota real de una
                 clave, así que esto es una estimación, no un dato oficial. La cuota gratuita de

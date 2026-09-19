@@ -41,6 +41,46 @@ function esErrorTransitorio(err: any): boolean {
   return true;
 }
 
+/**
+ * ¿Este fallo lo resuelve el tiempo? Cuota agotada y servicio saturado sí: la
+ * cuota diaria vuelve, y la saturación baja. Una clave mal configurada o un
+ * schema inválido, no — reintentarlos mañana daría exactamente lo mismo.
+ *
+ * Distinto de esErrorTransitorio, que decide si conviene reintentar AHORA con
+ * la misma clave dentro de la misma request. Acá la pregunta es si vale la pena
+ * encolar el trabajo para MÁS TARDE.
+ */
+export function loResuelveElTiempo(err: any): boolean {
+  const status = err?.status ?? err?.response?.status;
+  if (status === 429 || status === 503 || status === 500 || status === 504) return true;
+  const mensaje = String(err?.message ?? "").toLowerCase();
+  return /quota|rate.?limit|overload|unavailable|exhausted|too many requests|timeout|saturad/.test(
+    mensaje
+  );
+}
+
+/**
+ * Todos los proveedores configurados fallaron.
+ *
+ * Lleva los fallos por separado y, sobre todo, si alguno fue de los que el
+ * tiempo resuelve: eso es lo que le permite a la ruta decidir entre encolar el
+ * trabajo para reintentarlo más tarde o devolver el error de una vez.
+ */
+export class ProveedoresAgotadosError extends Error {
+  readonly errores: string[];
+  readonly vuelveAServirMasTarde: boolean;
+
+  constructor(operacion: string, errores: string[], vuelveAServirMasTarde: boolean) {
+    super(
+      `[${operacion}] Los ${errores.length} proveedor(es) de IA configurados fallaron, en orden:\n` +
+        errores.map((e, i) => `  ${i + 1}. ${e}`).join("\n")
+    );
+    this.name = "ProveedoresAgotadosError";
+    this.errores = errores;
+    this.vuelveAServirMasTarde = vuelveAServirMasTarde;
+  }
+}
+
 async function conReintentos<T>(fn: () => Promise<T>, intentos = 5): Promise<T> {
   for (let i = 0; i < intentos; i++) {
     try {
@@ -263,6 +303,7 @@ export function listarProveedoresConfigurados(): string[] {
 
 export async function generarJSONConFallback(args: GenerarJSONArgs): Promise<any> {
   const errores: string[] = [];
+  let algunoVuelveMasTarde = false;
 
   const clavesGemini = clavesGeminiConfiguradas();
   const claveGroq = process.env.GROQ_API_KEY;
@@ -274,6 +315,7 @@ export async function generarJSONConFallback(args: GenerarJSONArgs): Promise<any
       return resultado;
     } catch (err) {
       registrarUso(etiqueta, args.nombreOperacion, false);
+      if (loResuelveElTiempo(err)) algunoVuelveMasTarde = true;
       errores.push(`Gemini (${etiqueta}): ${mensajeError(err)}`);
     }
   }
@@ -285,6 +327,7 @@ export async function generarJSONConFallback(args: GenerarJSONArgs): Promise<any
       return resultado;
     } catch (err) {
       registrarUso("GROQ_API_KEY", args.nombreOperacion, false);
+      if (loResuelveElTiempo(err)) algunoVuelveMasTarde = true;
       errores.push(`Groq (última instancia): ${mensajeError(err)}`);
     }
   } else if (claveGroq) {
@@ -302,8 +345,5 @@ export async function generarJSONConFallback(args: GenerarJSONArgs): Promise<any
     );
   }
 
-  throw new Error(
-    `[${args.nombreOperacion}] Los ${errores.length} proveedor(es) de IA configurados fallaron, en orden:\n` +
-      errores.map((e, i) => `  ${i + 1}. ${e}`).join("\n")
-  );
+  throw new ProveedoresAgotadosError(args.nombreOperacion, errores, algunoVuelveMasTarde);
 }

@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node --import tsx --test src/lib/comparadorConfiguracion/__tests__/parser.test.ts src/lib/comparadorConfiguracion/__tests__/validaciones.test.ts",
+    "test": "node --import tsx --test src/lib/__tests__/ahorroIa.test.ts src/lib/__tests__/coherenciaRmd.test.ts src/lib/__tests__/colaTrabajos.test.ts src/lib/__tests__/reglasReemplazo.test.ts src/lib/comparadorRmd/__tests__/homologacion.test.ts src/lib/comparadorRmd/__tests__/verificacion.test.ts src/lib/comparadorConfiguracion/__tests__/parser.test.ts src/lib/comparadorConfiguracion/__tests__/validaciones.test.ts",
     "compare-config": "tsx scripts/compararConfiguracion.ts",
     "db:push": "tsx scripts/aplicarMigraciones.ts",
     "postinstall": "node scripts/copy-pdf-worker.js"

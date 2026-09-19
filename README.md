@@ -167,6 +167,148 @@ Abre `http://localhost:3000`.
   que debas aceptar como "mejora" — cambia el contrato de responsabilidad del
   sistema.
 
+## Consumo de cuota de IA
+
+La cuota gratuita de Gemini se agota rápido y el servicio se satura a ciertas
+horas, así que el proyecto reduce deliberadamente cuándo hace falta el modelo.
+Estas son las decisiones, ordenadas por lo que ahorran:
+
+| Qué | Dónde | Efecto |
+| --- | --- | --- |
+| **Caché por huella de la entrada** | `src/lib/cacheRevisiones.ts` | Una entrada ya analizada devuelve el resultado guardado, sin llamada |
+| **Homologación contra RMD de referencia, 100% determinística** | `src/lib/comparadorRmd/homologacion.ts` | `/api/revision-referencia` no consume cuota |
+| **Verificación de correcciones por búsqueda de texto** | `src/lib/comparadorRmd/verificacion.ts` | `/api/verificar-correccion` no consume cuota |
+| **Reglas de término verificadas sin modelo** | `src/lib/reglasReemplazo.ts` | Esas reglas salen del prompt y no se pueden pasar por alto |
+| **El PDF crudo se adjunta sólo si el parseo quedó corto** | `src/lib/adjuntarPdf.ts` | Menos tokens por llamada en las rutas que sí usan el modelo |
+| **Se saltea el modelo si los documentos son idénticos** | `/api/revision-borrador` | Cero llamadas cuando no hay nada que interpretar |
+| **Cuatro verificaciones de coherencia hechas por código** | `src/lib/coherenciaRmd.ts` | Salen del prompt (~600 tokens menos) y ya no dependen de que el modelo no se distraiga |
+| **El maestro de equipos viaja acotado al documento** | `src/lib/maestroEquipos.ts` | Con un maestro grande, cientos de líneas menos por llamada |
+| **Caché de extracción por OCR** | `src/lib/cacheExtraccion.ts` | Un escaneo ya leído no se vuelve a leer, y el OCR es lo más caro del sistema |
+| **Cola con reintento diferido** | `src/lib/colaTrabajos.ts` | No ahorra cuota: evita que una saturación te obligue a repetir el trabajo a mano |
+
+`/api/estado-ia` muestra cuántas llamadas se ahorraron por caché. Para ver
+dónde se va la cuota realmente:
+
+```sql
+select operacion,
+       count(*) filter (where exito) as ok,
+       count(*) filter (where not exito) as fallidas
+from uso_ia
+where proveedor <> 'cache'
+group by 1 order by ok desc;
+```
+
+### Cómo funciona la caché
+
+La huella es un SHA-256 de todo lo que determina el resultado: la estructura
+del RMD, el Control de Cambios, las reglas aplicables, el maestro de equipos
+**y los maestros de los cruces determinísticos** (documentos obsoletos,
+documentos vigentes de los códigos citados, equipos calificados de los equipos
+citados). Incluir los maestros es lo que la hace correcta: si cambia un maestro
+que este documento efectivamente usa, la huella cambia y la revisión se rehace.
+Si sólo se hasheara el prompt, un documento que venció después de la corrida
+seguiría devolviéndose sin su alerta.
+
+`REVISION_CACHE_OFF=1` la apaga. Si la migración `0012` no se aplicó, la caché
+se desactiva sola en vez de romper el guardado.
+
+### Coherencia: qué verifica el código y qué el modelo
+
+Cuatro alertas de coherencia las calcula `coherenciaRmd.ts` y los prompts
+piden explícitamente **no** reportarlas, así que no hay duplicados:
+
+| Alerta | Cómo se verifica |
+| --- | --- |
+| `referencia_cruzada_rota` | Citas internas ("según el paso 4.2.5") contra los pasos que existen. Exige la palabra clave para no confundir una cita con cualquier número con puntos, y acepta la cita a una subsección que sí tiene pasos |
+| `equipo_sin_preparacion_registrada` | Cada ítem de la sección 1 contra el texto de todos los pasos, por código o por contención de sus palabras distintivas |
+| `nota_vb_faltante` | El campo `requiereVB` contra las dos partes irreemplazables de la nota, no la frase completa: una redacción equivalente no cuenta como faltante |
+| `cantidad_insumo_no_cuadra` | Suma las cantidades del procedimiento por insumo y las compara contra la sección 2, con conversión de unidades y 0,5% de tolerancia |
+| `falla_redaccion` (sólo dos casos) | Palabras repetidas dos veces seguidas y paréntesis sin cerrar. El resto de la regla — gramática, frases ambiguas, puntuación que cambia el sentido — sigue siendo del modelo |
+
+Son justo las que un modelo hace peor: sumar doce cantidades sin equivocarse,
+recorrer treinta equipos sin saltarse ninguno, confirmar una nota literal.
+
+El cuadre de cantidades es deliberadamente conservador y **se abstiene** si
+algún paso menciona el insumo sin cantidad, si un paso menciona dos insumos a
+la vez, o si un paso trae dos cantidades de la misma dimensión: ahí no se puede
+saber qué número va con qué insumo, y un falso "no cuadra" en un documento GMP
+es peor que no decir nada. También descarta unidades compuestas — "34 KG/CM2"
+es una presión, no una masa.
+
+**Detalle de lectura de cantidades:** en estos RMD el separador decimal es el
+punto y las cantidades de insumo se escriben con tres decimales, así que
+"5.250 kg" son 5,25 kg y no 5250 kg. Lo confirma `# Decimales = 3` en la
+configuración de los campos de insumo del sistema digital.
+
+De la regla de citas cruzadas, al modelo le queda la mitad que sí necesita
+criterio: que el paso citado exista lo verifica el código; que su **contenido**
+siga correspondiendo a lo que la cita da a entender sigue siendo suyo.
+
+### Cuando la IA está saturada: la cola
+
+La cuota gratuita se satura a ciertas horas y la cuota diaria se agota. Cuando
+fallan los cinco proveedores configurados, el trabajo no se pierde ni te devuelve
+un error: queda en cola con su entrada completa y se reintenta solo a los 10
+minutos, 30, 60, y de ahí cada 2 horas hasta doce intentos. Eso cubre más de un
+día, así que sobrevive al reinicio de la cuota diaria.
+
+Sólo se encola lo que el tiempo resuelve. Una clave mal configurada o un schema
+inválido no se encolan: reintentarlos mañana daría el mismo error, y es mejor
+verlo ahora. Lo decide `ProveedoresAgotadosError`, que lleva los fallos de cada
+proveedor por separado y si alguno fue de cuota o saturación.
+
+En la UI, el aviso reemplaza al error: la pestaña consulta el estado cada 45
+segundos y la revisión se abre sola cuando el worker la resuelve. Si cerrás la
+pestaña no se pierde nada — el trabajo sigue en el servidor y su resultado queda
+guardado con la huella de la entrada, así que volver a subir el mismo documento
+lo devuelve al instante por caché.
+
+**Configuración necesaria.** El worker vive en `POST/GET
+/api/trabajos/procesar` y exige `CRON_SECRET` en producción: un endpoint abierto
+que gasta cuota de IA es un problema, no una comodidad. `vercel.json` ya declara
+el cron horario, y Vercel manda el secreto solo como
+`Authorization: Bearer $CRON_SECRET`. Ojo con el plan: en Hobby los cron corren
+una vez al día, así que para reintentos horarios hace falta Pro o un cron
+externo (cualquier servicio que pegue a la URL con `?secreto=<CRON_SECRET>`).
+
+Sin la migración `0014` aplicada, la cola se desactiva sola y el comportamiento
+vuelve a ser el de antes: error directo.
+
+### Qué sigue necesitando el modelo, y por qué
+
+- **`/api/revision` (RMD vs Control de Cambios).** Leer un CC en prosa y
+  mapearlo a pasos numerados es el trabajo semántico real y es el valor del
+  producto. No se toca.
+- **`/api/revision-borrador`.** Juzgar si un cambio propuesto cumple las reglas
+  permanentes, y leer anotaciones manuscritas del PDF del borrador
+  (`origenAnotacionInformal`), necesita el modelo. Lo mecánico (qué paso se
+  agregó, se quitó, se renumeró o cambió de texto) se calcula aparte y se usa
+  como red de seguridad: si el modelo no reportó una diferencia mecánica, se
+  agrega igual, y la respuesta dice cuántas hubo.
+- **OCR de PDFs escaneados.** Es una tarea de visión.
+
+Lo que se evaluó y se decidió NO hacer: recortar el prompt de
+`/api/revision-borrador` a los pasos que cambiaron. Sería el mayor ahorro de
+esa ruta, pero ese prompt está escrito para recibir dos documentos completos y
+con documentos recortados reportaría como "paso eliminado" todo lo filtrado.
+Requiere reescribir el prompt y validarlo contra documentos reales.
+
+### Lo determinístico frente al modelo
+
+Las comparaciones determinísticas nunca inventan equivalencias y son
+reproducibles, pero tampoco dicen "estos dos pasos redactados distinto
+significan lo mismo, ignoralo". Por eso reportan la diferencia con las dos
+citas al lado y el criterio queda en el analista. En
+`/api/revision-referencia` y `/api/verificar-correccion`, `usarIA: true` en el
+body vuelve al camino con modelo cuando se quiere ese juicio semántico.
+
+En la homologación, `nivelConfianza` cambia de significado respecto de la
+versión con modelo: la detección determinística siempre es certera, así que el
+campo indica si el hallazgo **amerita acción**. Un paso que la referencia no
+tiene y que no se parece a nada suele ser legítimamente propio del producto
+(confianza baja); uno con el mismo número y otra redacción casi siempre hay que
+homologarlo (alta). La justificación siempre dice cuál de los dos casos es.
+
 ## Comparador de configuraciones (sin IA)
 
 Aparte del flujo anterior, el repo incluye un módulo **100% determinístico,

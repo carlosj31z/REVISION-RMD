@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { compararRMDvsReferencia } from "@/lib/gemini";
+import { compararContraReferencia } from "@/lib/comparadorRmd/homologacion";
 import { getSupabaseServerClient } from "@/lib/supabaseClient";
-import type { RMDExtraido } from "@/types/rmd";
+import type { RMDExtraido, ResultadoComparacionReferencia } from "@/types/rmd";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -13,6 +14,15 @@ interface RevisionReferenciaRequestBody {
   pdfReferenciaBase64?: string;
   documentoId?: string;
   creadoPor?: string;
+  /**
+   * Pide la comparación con modelo de IA en vez de la determinística. Apagado
+   * por defecto: la comparación de estructura y redacción no necesita
+   * interpretar lenguaje, y cada corrida con modelo consume cuota. Se deja
+   * disponible para cuando el analista quiera además el criterio semántico
+   * ("estos dos pasos redactados distinto significan lo mismo"), que es lo
+   * único que el modelo aporta acá.
+   */
+  usarIA?: boolean;
 }
 
 /**
@@ -22,6 +32,11 @@ interface RevisionReferenciaRequestBody {
  * corresponda — deliberadamente NO corre los cruces de reglas permanentes/
  * documentos/equipos de las otras dos rutas: es un análisis de estructura
  * entre dos documentos, no una auditoría de cumplimiento.
+ *
+ * Por defecto la comparación es 100% determinística (ver
+ * comparadorRmd/homologacion.ts): emparejar pasos y comparar textos no
+ * requiere un modelo, y así esta ruta dejó de consumir cuota de Gemini.
+ * Con `usarIA: true` se usa el camino anterior con modelo.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -40,12 +55,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const resultadoIA = await compararRMDvsReferencia({
-      rmd: body.rmd,
-      pdfBase64: body.pdfBase64,
-      rmdReferencia: body.rmdReferencia,
-      pdfReferenciaBase64: body.pdfReferenciaBase64,
-    });
+    let resultadoIA: ResultadoComparacionReferencia;
+    if (body.usarIA) {
+      resultadoIA = await compararRMDvsReferencia({
+        rmd: body.rmd,
+        pdfBase64: body.pdfBase64,
+        rmdReferencia: body.rmdReferencia,
+        pdfReferenciaBase64: body.pdfReferenciaBase64,
+      });
+    } else {
+      resultadoIA = compararContraReferencia(body.rmd, body.rmdReferencia);
+    }
 
     const supabase = getSupabaseServerClient();
     const { data: revisionGuardada, error: insertError } = await supabase
@@ -66,6 +86,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         resultado: resultadoIA,
         persistido: false,
+        usoIA: body.usarIA === true,
         avisoPersistencia: `No se pudo guardar la revisión en la base de datos: ${insertError.message}`,
       });
     }
@@ -74,6 +95,7 @@ export async function POST(req: NextRequest) {
       resultado: resultadoIA,
       persistido: true,
       revisionId: revisionGuardada.id,
+      usoIA: body.usarIA === true,
     });
   } catch (err: any) {
     return NextResponse.json(
