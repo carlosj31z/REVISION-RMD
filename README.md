@@ -138,3 +138,73 @@ Abre `http://localhost:3000`.
   citas/descripciones, es una señal de que el prompt necesita ajuste, no algo
   que debas aceptar como "mejora" — cambia el contrato de responsabilidad del
   sistema.
+
+## Comparador de configuraciones (sin IA)
+
+Aparte del flujo anterior, el repo incluye un módulo **100% determinístico,
+sin ninguna llamada a IA**, para comparar el archivo de "Configuración" (el
+export del sistema digital) de un producto de referencia ya autorizado contra
+el de un producto en desarrollo, antes de mandar el RMD a Validaciones.
+
+- **Módulo:** `src/lib/comparadorConfiguracion/`, con
+  `compareConfigurations(referenceBuffer, targetBuffer)` como punto de entrada.
+- **Tipos:** `src/types/configuracion.ts` (`ComparisonReport`).
+- **Endpoint:** `POST /api/comparar-configuracion` — recibe los dos archivos
+  como `multipart/form-data` en los campos `referencia` y `objetivo`, y
+  devuelve `{ reporte }` con el `ComparisonReport` en JSON.
+- **CLI:**
+
+  ```bash
+  npm run compare-config -- referencia.xlsx objetivo.xlsx
+  npm run compare-config -- referencia.xlsx objetivo.xlsx --solo-errores
+  npm run compare-config -- referencia.xlsx objetivo.xlsx --json > informe.json
+  ```
+
+  Termina con código 1 si el archivo objetivo tiene errores, para poder usarlo
+  como verificación previa en un script.
+- **Tests:** `npm test` (runner nativo de Node vía `tsx`; requiere Node 20+).
+  Los casos son hojas sintéticas armadas en código, sin `.xlsx` de fixture.
+
+### Qué valida
+
+1. **Integridad de la cadena `Depende → Cod.`** — el `Depende` de un ítem
+   apunta al `Cod.` del ítem que debe completarse justo antes, formando la
+   secuencia real de ejecución del registro. Se distingue el *enlace roto*
+   (apunta a un `Cod.` que no existe antes: error) del *branch-back* (retoma
+   un ítem anterior que sí existe, típico del inicio de una subsección).
+2. **Numeración de `Orden`** — que la `N` de cada nivel (`6.4.N`,
+   `6.4.31.N`) sea consecutiva, sin saltos ni duplicados. Los `Orden` de un
+   solo nivel se agrupan por sección, así que las subsecciones cortas
+   (PRECAUCIONES, NOTAS IMPORTANTES, CONDICIONES AMBIENTALES) pueden
+   reiniciar en 1 sin que cuente como salto.
+3. **Columnas `Tipo Dato` / `Val. Inicial` / `Val. Final` / `# Decimales`** —
+   todo `Rango` con los dos extremos numéricos y `Val. Inicial < Val. Final`;
+   todo `Rango` y todo `Números` con `# Decimales` definido; los extremos
+   vacíos en cualquier tipo que no sea `Rango`; y ningún `Tipo Dato` en el
+   objetivo que no exista también en la referencia.
+4. **Cruce por `Cod.` compartido** — el mismo `Cod.` configurado distinto en
+   cada archivo (advertencia: puede ser un cambio intencional), y el `Cod.`
+   repetido dentro de un mismo archivo con definiciones distintas entre sus
+   propias apariciones (inconsistencia interna).
+5. **Diff estructural** — qué `Cod.` existe sólo en la referencia (paso
+   eliminado) y qué `Cod.` sólo en el objetivo (paso agregado).
+
+### Decisiones de diseño del comparador
+
+- **La referencia es la línea base, no un archivo exento.** Se valida también
+  a ella y sus hallazgos se informan, pero no bloquean al objetivo:
+  `resumen.sinErroresBloqueantes` sólo mira los errores atribuibles al
+  archivo objetivo. Un branch-back que la referencia ya trae en la misma
+  posición baja a informativo en el objetivo, porque es el patrón esperado
+  del registro y no un defecto del producto nuevo.
+- **`Cod.` no es único dentro de un archivo.** El mismo campo del sistema
+  (ej. "HUMEDAD RELATIVA") se reutiliza en varias etapas, así que un
+  `Depende` se resuelve a la **aparición anterior más cercana** de ese `Cod.`,
+  y el análisis de huérfanos trabaja por posición y no por código.
+- **El núcleo no conoce Excel.** Todo trabaja sobre una matriz de celdas;
+  SheetJS queda aislado en `parser.ts` (`leerMatriz`). Eso es lo que permite
+  testear con casos sintéticos y cambiar de librería tocando un solo archivo.
+- **Las columnas se identifican por su encabezado, no por su posición**, para
+  que un cambio de orden en el export falle de forma visible en vez de
+  devolver datos corridos. El título de sección se acepta tanto en la
+  columna `#` (que es donde viene hoy) como en `Orden`.
