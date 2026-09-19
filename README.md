@@ -183,6 +183,8 @@ Estas son las decisiones, ordenadas por lo que ahorran:
 | **Se saltea el modelo si los documentos son idénticos** | `/api/revision-borrador` | Cero llamadas cuando no hay nada que interpretar |
 | **Cuatro verificaciones de coherencia hechas por código** | `src/lib/coherenciaRmd.ts` | Salen del prompt (~600 tokens menos) y ya no dependen de que el modelo no se distraiga |
 | **El maestro de equipos viaja acotado al documento** | `src/lib/maestroEquipos.ts` | Con un maestro grande, cientos de líneas menos por llamada |
+| **Caché de extracción por OCR** | `src/lib/cacheExtraccion.ts` | Un escaneo ya leído no se vuelve a leer, y el OCR es lo más caro del sistema |
+| **Cola con reintento diferido** | `src/lib/colaTrabajos.ts` | No ahorra cuota: evita que una saturación te obligue a repetir el trabajo a mano |
 
 `/api/estado-ia` muestra cuántas llamadas se ahorraron por caché. Para ver
 dónde se va la cuota realmente:
@@ -221,6 +223,7 @@ piden explícitamente **no** reportarlas, así que no hay duplicados:
 | `equipo_sin_preparacion_registrada` | Cada ítem de la sección 1 contra el texto de todos los pasos, por código o por contención de sus palabras distintivas |
 | `nota_vb_faltante` | El campo `requiereVB` contra las dos partes irreemplazables de la nota, no la frase completa: una redacción equivalente no cuenta como faltante |
 | `cantidad_insumo_no_cuadra` | Suma las cantidades del procedimiento por insumo y las compara contra la sección 2, con conversión de unidades y 0,5% de tolerancia |
+| `falla_redaccion` (sólo dos casos) | Palabras repetidas dos veces seguidas y paréntesis sin cerrar. El resto de la regla — gramática, frases ambiguas, puntuación que cambia el sentido — sigue siendo del modelo |
 
 Son justo las que un modelo hace peor: sumar doce cantidades sin equivocarse,
 recorrer treinta equipos sin saltarse ninguno, confirmar una nota literal.
@@ -240,6 +243,36 @@ configuración de los campos de insumo del sistema digital.
 De la regla de citas cruzadas, al modelo le queda la mitad que sí necesita
 criterio: que el paso citado exista lo verifica el código; que su **contenido**
 siga correspondiendo a lo que la cita da a entender sigue siendo suyo.
+
+### Cuando la IA está saturada: la cola
+
+La cuota gratuita se satura a ciertas horas y la cuota diaria se agota. Cuando
+fallan los cinco proveedores configurados, el trabajo no se pierde ni te devuelve
+un error: queda en cola con su entrada completa y se reintenta solo a los 10
+minutos, 30, 60, y de ahí cada 2 horas hasta doce intentos. Eso cubre más de un
+día, así que sobrevive al reinicio de la cuota diaria.
+
+Sólo se encola lo que el tiempo resuelve. Una clave mal configurada o un schema
+inválido no se encolan: reintentarlos mañana daría el mismo error, y es mejor
+verlo ahora. Lo decide `ProveedoresAgotadosError`, que lleva los fallos de cada
+proveedor por separado y si alguno fue de cuota o saturación.
+
+En la UI, el aviso reemplaza al error: la pestaña consulta el estado cada 45
+segundos y la revisión se abre sola cuando el worker la resuelve. Si cerrás la
+pestaña no se pierde nada — el trabajo sigue en el servidor y su resultado queda
+guardado con la huella de la entrada, así que volver a subir el mismo documento
+lo devuelve al instante por caché.
+
+**Configuración necesaria.** El worker vive en `POST/GET
+/api/trabajos/procesar` y exige `CRON_SECRET` en producción: un endpoint abierto
+que gasta cuota de IA es un problema, no una comodidad. `vercel.json` ya declara
+el cron horario, y Vercel manda el secreto solo como
+`Authorization: Bearer $CRON_SECRET`. Ojo con el plan: en Hobby los cron corren
+una vez al día, así que para reintentos horarios hace falta Pro o un cron
+externo (cualquier servicio que pegue a la URL con `?secreto=<CRON_SECRET>`).
+
+Sin la migración `0014` aplicada, la cola se desactiva sola y el comportamiento
+vuelve a ser el de antes: error directo.
 
 ### Qué sigue necesitando el modelo, y por qué
 
