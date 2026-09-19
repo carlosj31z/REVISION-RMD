@@ -7,6 +7,10 @@ import {
 } from "@/lib/gemini";
 import { getSupabaseServerClient } from "@/lib/supabaseClient";
 import { cargarReglasAplicables } from "@/lib/reglas";
+import { aDiferenciasBorrador, detectarTerminosSinHomologar, separarReglas } from "@/lib/reglasReemplazo";
+import { diferenciasMecanicas, fusionarConMecanicas } from "@/lib/comparadorRmd/borrador";
+import { decidirAdjuntarPdfRmd } from "@/lib/adjuntarPdf";
+import { buscarRevisionEnCache, huellaEntrada, huellaParaGuardar } from "@/lib/cacheRevisiones";
 import {
   cargarDocumentosObsoletosActivos,
   detectarDocumentosObsoletosReferenciados,
@@ -21,7 +25,7 @@ import {
   construirInfoCalificacionEquipos,
   detectarEquiposNoCalificadosReferenciados,
 } from "@/lib/equiposCalificados";
-import type { RMDExtraido } from "@/types/rmd";
+import type { RMDExtraido, ResultadoComparacionBorrador, SeccionCodigo, EtapaCodigo } from "@/types/rmd";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -45,6 +49,9 @@ interface RevisionBorradorRequestBody {
   seccionCodigo?: string;
   etapaCodigo?: string;
   creadoPor?: string;
+  // Adjunta el PDF del RMD vigente al modelo aunque el parseo se vea completo
+  // (el del borrador va siempre: es donde están las anotaciones manuscritas).
+  forzarPdf?: boolean;
 }
 
 /**
@@ -84,29 +91,149 @@ export async function POST(req: NextRequest) {
     }
     const equiposMaestro: EquipoMaestro[] = equiposData ?? [];
     const reglas = await cargarReglasAplicables(supabase, body.seccionCodigo, body.etapaCodigo);
+    // Las reglas de reemplazo de término se verifican por búsqueda de texto:
+    // no van al prompt y no se pueden pasar por alto.
+    const { libres: reglasLibres, reemplazos } = separarReglas(reglas);
+
+    // Diferencias mecánicas entre los dos documentos: qué paso se agregó, se
+    // quitó, se renumeró o cambió de texto. Sirve de red de seguridad sobre
+    // lo que devuelva el modelo, y permite saltear la llamada si no hay nada
+    // mecánico que reportar ni reglas de texto libre que interpretar.
+    const mecanicas =
+      body.rmdBorrador && body.modo !== "corregido_vs_borrador"
+        ? diferenciasMecanicas(body.rmdVigente, body.rmdBorrador)
+        : null;
+
+    // El término sin homologar se busca en el documento que se está
+    // proponiendo: el borrador si hay, el vigente si se revisa solo.
+    const documentoDeTerminos = body.rmdBorrador ?? body.rmdVigente;
+    const terminosSinHomologar = aDiferenciasBorrador(
+      detectarTerminosSinHomologar(documentoDeTerminos, reemplazos),
+      body.rmdBorrador ? "borrador" : "vigente"
+    );
+
+    const decisionPdf = decidirAdjuntarPdfRmd(body.rmdVigente, body.forzarPdf);
+
+    // Maestros de los cruces determinísticos, cargados una sola vez: entran en
+    // la huella de la caché y se reusan más abajo para los cruces. Así un
+    // cambio en un maestro que estos documentos usan invalida la revisión
+    // guardada, y la foto que se hashea es exactamente la que se cruzó.
+    const codigosReferenciados = [
+      ...body.rmdVigente.documentosReferenciados,
+      ...(body.rmdBorrador?.documentosReferenciados ?? []),
+    ].map((d) => d.codigo);
+    const codigosEquipos = [
+      ...body.rmdVigente.equiposInstrumentos,
+      ...(body.rmdBorrador?.equiposInstrumentos ?? []),
+    ].map((e) => e.codigo);
+    const documentosObsoletos = await cargarDocumentosObsoletosActivos(supabase);
+    const documentosVigentes = await cargarDocumentosVigentesPorCodigos(
+      supabase,
+      codigosReferenciados
+    );
+    const equiposCalificados = await cargarEquiposCalificadosPorCodigos(supabase, codigosEquipos);
+
+    const huella = huellaEntrada({
+      operacion: "compararRMDvsBorrador",
+      modo: body.modo ?? "vigente_vs_borrador",
+      rmdVigente: body.rmdVigente,
+      rmdBorrador: body.rmdBorrador ?? null,
+      // El PDF del borrador es parte de la entrada: las anotaciones
+      // manuscritas sólo están ahí.
+      pdfBorrador: body.pdfBorradorBase64 ?? null,
+      adjuntaPdfVigente: decisionPdf.adjuntar,
+      equiposMaestro,
+      reglas,
+      documentosObsoletos,
+      documentosVigentes,
+      equiposCalificados,
+    });
+    const cacheado = await buscarRevisionEnCache<ResultadoComparacionBorrador>(
+      supabase,
+      "borrador_produccion",
+      huella,
+      "compararRMDvsBorrador"
+    );
+
+    if (cacheado) {
+      return NextResponse.json({
+        resultado: cacheado.resultado,
+        advertenciasEquipos: cacheado.resultado.diferenciasDetectadas.filter(
+          (d) => d.involucraEquipoRetirado
+        ),
+        persistido: true,
+        revisionId: cacheado.revisionId,
+        desdeCache: true,
+        analizadoEn: cacheado.creadoEn,
+      });
+    }
 
     const comparar =
       body.modo === "corregido_vs_borrador" ? verificarCorreccionVsBorrador : compararRMDvsBorrador;
 
-    const resultadoIA = body.rmdBorrador
-      ? await comparar({
-          rmdVigente: body.rmdVigente,
-          pdfVigenteBase64: body.pdfVigenteBase64,
-          rmdBorrador: body.rmdBorrador,
-          pdfBorradorBase64: body.pdfBorradorBase64,
-          equiposMaestro,
-          reglas,
-        })
-      : await verificarCumplimientoSolo({
-          rmd: body.rmdVigente,
-          pdfBase64: body.pdfVigenteBase64,
-          equiposMaestro,
-          reglas,
-        });
+    // Si los dos documentos son mecánicamente idénticos y no queda ninguna
+    // regla que necesite interpretación, el modelo no tiene nada que aportar.
+    const puedeSaltearModelo =
+      mecanicas !== null && mecanicas.diferencias.length === 0 && reglasLibres.length === 0;
+
+    let resultadoIA: ResultadoComparacionBorrador;
+    let usoModelo = true;
+    let mecanicasAgregadas = 0;
+
+    if (puedeSaltearModelo) {
+      usoModelo = false;
+      resultadoIA = {
+        resumenEjecutivo:
+          "El borrador no propone ninguna diferencia respecto del RMD vigente: los pasos, equipos e insumos " +
+          "coinciden uno a uno (comparación textual, ignorando mayúsculas y tildes). No se consultó al modelo " +
+          "porque no quedaba nada que interpretar.",
+        seccionDetectada: (body.seccionCodigo as SeccionCodigo) ?? "NO_IDENTIFICADA",
+        etapaDetectada: (body.etapaCodigo as EtapaCodigo) ?? "NO_IDENTIFICADA",
+        diferenciasDetectadas: [],
+        alertasCoherencia: [],
+        equiposRetiradosDetectados: [],
+        coincidenciaPorcentaje: mecanicas.coincidenciaPorcentaje,
+        requiereRevisionHumana: false,
+      };
+    } else {
+      resultadoIA = body.rmdBorrador
+        ? await comparar({
+            rmdVigente: body.rmdVigente,
+            pdfVigenteBase64: decisionPdf.adjuntar ? body.pdfVigenteBase64 : undefined,
+            rmdBorrador: body.rmdBorrador,
+            // El PDF del borrador va siempre: es donde están las anotaciones
+            // manuscritas y el texto sobrepuesto que el modelo necesita ver
+            // para marcar origenAnotacionInformal.
+            pdfBorradorBase64: body.pdfBorradorBase64,
+            equiposMaestro,
+            reglas: reglasLibres,
+          })
+        : await verificarCumplimientoSolo({
+            rmd: body.rmdVigente,
+            pdfBase64: decisionPdf.adjuntar ? body.pdfVigenteBase64 : undefined,
+            equiposMaestro,
+            reglas: reglasLibres,
+          });
+
+      // Red de seguridad: se agrega toda diferencia mecánica sobre la que el
+      // modelo no dijo nada. Mismo patrón que el recálculo de equipos
+      // retirados — el modelo propone, el código valida.
+      if (mecanicas) {
+        const fusion = fusionarConMecanicas(resultadoIA.diferenciasDetectadas, mecanicas.diferencias);
+        resultadoIA.diferenciasDetectadas = fusion.diferencias;
+        mecanicasAgregadas = fusion.agregadas;
+      }
+    }
+
+    if (terminosSinHomologar.length > 0) {
+      resultadoIA.diferenciasDetectadas = [
+        ...resultadoIA.diferenciasDetectadas,
+        ...terminosSinHomologar,
+      ];
+    }
 
     // Documentos obsoletos: cruce determinístico. Si no hay borrador, solo
     // se cruza el único documento recibido.
-    const documentosObsoletos = await cargarDocumentosObsoletosActivos(supabase);
     const alertasDocumentosObsoletos = body.rmdBorrador
       ? [
           ...detectarDocumentosObsoletosReferenciados(
@@ -135,14 +262,6 @@ export async function POST(req: NextRequest) {
     // vigencia — si vigente_hasta ya pasó, alerta igual que un obsoleto
     // manual, y además se adjunta título+fecha de cada documento cruzado
     // para que la UI lo muestre junto al código sin otra consulta.
-    const codigosReferenciados = [
-      ...body.rmdVigente.documentosReferenciados,
-      ...(body.rmdBorrador?.documentosReferenciados ?? []),
-    ].map((d) => d.codigo);
-    const documentosVigentes = await cargarDocumentosVigentesPorCodigos(
-      supabase,
-      codigosReferenciados
-    );
     const alertasVencidos = body.rmdBorrador
       ? [
           ...detectarDocumentosVencidosReferenciados(
@@ -171,11 +290,6 @@ export async function POST(req: NextRequest) {
     // Equipos calificados (maestro importado del Excel de OQ/PQ): mismo
     // cruce que en /api/revision, contra los códigos de EQUIPOS/
     // INSTRUMENTOS/MATERIALES de ambos documentos si hay borrador.
-    const codigosEquipos = [
-      ...body.rmdVigente.equiposInstrumentos,
-      ...(body.rmdBorrador?.equiposInstrumentos ?? []),
-    ].map((e) => e.codigo);
-    const equiposCalificados = await cargarEquiposCalificadosPorCodigos(supabase, codigosEquipos);
     const alertasNoCalificados = body.rmdBorrador
       ? [
           ...detectarEquiposNoCalificadosReferenciados(
@@ -215,6 +329,7 @@ export async function POST(req: NextRequest) {
         score_coherencia: resultadoIA.coincidenciaPorcentaje,
         advertencias_equipos: advertenciasEquipos,
         creado_por: body.creadoPor ?? null,
+        ...(await huellaParaGuardar(supabase, huella)),
       })
       .select()
       .single();
@@ -234,6 +349,12 @@ export async function POST(req: NextRequest) {
       advertenciasEquipos,
       persistido: true,
       revisionId: revisionGuardada.id,
+      desdeCache: false,
+      usoModelo,
+      // Cuántas diferencias mecánicas se agregaron porque el modelo no las
+      // había reportado: si esto crece seguido, el prompt necesita revisión.
+      diferenciasMecanicasAgregadas: mecanicasAgregadas,
+      pdfVigenteAdjuntado: decisionPdf.adjuntar,
     });
   } catch (err: any) {
     console.error("Error en /api/revision-borrador:", err);

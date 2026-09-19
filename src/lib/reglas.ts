@@ -34,5 +34,8 @@ export async function cargarReglasAplicables(
     activa: fila.activa,
     creadoPor: fila.creado_por ?? null,
     createdAt: fila.created_at,
+    tipo: fila.tipo ?? "libre",
+    terminoOrigen: fila.termino_origen ?? null,
+    terminoDestino: fila.termino_destino ?? null,
   }));
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { compararRMDvsControlCambios, type EquipoMaestro } from "@/lib/gemini";
 import { getSupabaseServerClient } from "@/lib/supabaseClient";
 import { cargarReglasAplicables } from "@/lib/reglas";
+import { aDiscrepancias, detectarTerminosSinHomologar, separarReglas } from "@/lib/reglasReemplazo";
 import {
   cargarDocumentosObsoletosActivos,
   detectarDocumentosObsoletosReferenciados,
@@ -92,7 +93,11 @@ export async function POST(req: NextRequest) {
     const equiposMaestro: EquipoMaestro[] = equiposData ?? [];
 
     // 1b. Reglas permanentes de homologación aplicables a esta sección/etapa.
+    //     Las de reemplazo de término se verifican por búsqueda de texto más
+    //     abajo, así que no se le mandan al modelo: sólo viajan al prompt las
+    //     que necesitan interpretación.
     const reglas = await cargarReglasAplicables(supabase, body.seccionCodigo, body.etapaCodigo);
+    const { libres: reglasLibres, reemplazos } = separarReglas(reglas);
 
     // 1c. Maestros de los cruces determinísticos. Se cargan ANTES de llamar
     //     al modelo porque entran en la huella de la caché: si cambia un
@@ -156,8 +161,18 @@ export async function POST(req: NextRequest) {
       controlDeCambioTexto: body.controlDeCambioTexto,
       pdfControlCambioBase64: body.pdfControlCambioBase64,
       equiposMaestro,
-      reglas,
+      reglas: reglasLibres,
     });
+
+    // 2a. Reglas de reemplazo de término: búsqueda determinística, no depende
+    //     de que el modelo no se saltee ninguna.
+    const terminosSinHomologar = detectarTerminosSinHomologar(body.rmdVigente, reemplazos);
+    if (terminosSinHomologar.length > 0) {
+      resultadoIA.discrepanciasDetectadas = [
+        ...resultadoIA.discrepanciasDetectadas,
+        ...aDiscrepancias(terminosSinHomologar),
+      ];
+    }
 
     // 2b. Documentos obsoletos: cruce determinístico (no depende del modelo)
     //     entre lo citado en el RMD vigente y el maestro de obsoletos.

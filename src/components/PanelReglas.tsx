@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo } from "react";
-import type { ReglaHomologacion, SeccionCodigo, EtapaCodigo } from "@/types/rmd";
+import type { ReglaHomologacion, SeccionCodigo, EtapaCodigo, TipoRegla } from "@/types/rmd";
 import type { AnalisisRegla } from "@/lib/analizarRegla";
 import { leerRespuestaApi } from "@/lib/leerRespuestaApi";
 
@@ -47,6 +47,12 @@ export function PanelReglas({ onVolver }: Props) {
   const [mostrarInactivas, setMostrarInactivas] = useState(false);
 
   const [texto, setTexto] = useState("");
+  // Una regla de reemplazo de término se verifica buscando el término en el
+  // documento, sin gastar una llamada al modelo. Por eso se guarda con los dos
+  // términos en campos propios en vez de sólo la frase que los describe.
+  const [tipoRegla, setTipoRegla] = useState<TipoRegla>("libre");
+  const [terminoOrigen, setTerminoOrigen] = useState("");
+  const [terminoDestino, setTerminoDestino] = useState("");
   const [seccion, setSeccion] = useState<string>("TODAS");
   const [etapa, setEtapa] = useState<string>("TODAS");
   const [guardando, setGuardando] = useState(false);
@@ -81,6 +87,9 @@ export function PanelReglas({ onVolver }: Props) {
 
   const limpiarFormulario = useCallback(() => {
     setTexto("");
+    setTipoRegla("libre");
+    setTerminoOrigen("");
+    setTerminoDestino("");
     setSeccion("TODAS");
     setEtapa("TODAS");
     setAnalisis(null);
@@ -122,8 +131,19 @@ export function PanelReglas({ onVolver }: Props) {
     [texto, seccion, etapa, historial]
   );
 
+  const esReemplazo = tipoRegla === "reemplazo_termino";
+  // En modo reemplazo el texto de la regla se arma solo con los dos términos:
+  // así la lista se lee igual que siempre y no puede quedar describiendo algo
+  // distinto de lo que la regla realmente verifica.
+  const textoAGuardar = esReemplazo
+    ? `Donde diga "${terminoOrigen.trim()}" debe decir "${terminoDestino.trim()}".`
+    : texto.trim();
+  const puedeGuardar = esReemplazo
+    ? terminoOrigen.trim().length > 0 && terminoDestino.trim().length > 0
+    : texto.trim().length > 0;
+
   const guardarRegla = useCallback(async () => {
-    if (!texto.trim()) return;
+    if (!puedeGuardar) return;
     setGuardando(true);
     setError(null);
     try {
@@ -131,9 +151,12 @@ export function PanelReglas({ onVolver }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          texto: texto.trim(),
+          texto: textoAGuardar,
           seccionCodigo: seccion === "TODAS" ? null : (seccion as SeccionCodigo),
           etapaCodigo: etapa === "TODAS" ? null : (etapa as EtapaCodigo),
+          tipo: tipoRegla,
+          terminoOrigen: esReemplazo ? terminoOrigen.trim() : null,
+          terminoDestino: esReemplazo ? terminoDestino.trim() : null,
         }),
       });
       if (!res.ok) throw new Error((await leerRespuestaApi(res)).error ?? "No se pudo crear la regla.");
@@ -144,7 +167,18 @@ export function PanelReglas({ onVolver }: Props) {
     } finally {
       setGuardando(false);
     }
-  }, [texto, seccion, etapa, cargarReglas, limpiarFormulario]);
+  }, [
+    puedeGuardar,
+    textoAGuardar,
+    seccion,
+    etapa,
+    tipoRegla,
+    esReemplazo,
+    terminoOrigen,
+    terminoDestino,
+    cargarReglas,
+    limpiarFormulario,
+  ]);
 
   const alternarActiva = useCallback(async (regla: ReglaHomologacion) => {
     setReglas((prev) => prev.map((r) => (r.id === regla.id ? { ...r, activa: !r.activa } : r)));
@@ -234,6 +268,64 @@ export function PanelReglas({ onVolver }: Props) {
           {/* ---------- Redacción de una regla nueva ---------- */}
       <div className="mb-8 rounded-xl border border-line bg-surface p-4 shadow-soft">
         <label className="mb-1.5 block text-[12px] font-medium text-ink">Nueva regla</label>
+
+        {/* Qué clase de regla: define si la verifica el código o la IA. */}
+        <div className="mb-3 flex flex-col gap-1.5 sm:flex-row">
+          {(
+            [
+              ["libre", "Regla libre", "La interpreta la IA en cada revisión"],
+              ["reemplazo_termino", "Reemplazo de término", "Se verifica sin IA, buscando el término"],
+            ] as const
+          ).map(([valor, titulo, ayuda]) => (
+            <button
+              key={valor}
+              type="button"
+              onClick={() => {
+                setTipoRegla(valor);
+                if (analisis) setAnalisis(null);
+              }}
+              className={`flex-1 rounded-lg border px-3 py-2 text-left transition-all duration-150 ease-spring ${
+                tipoRegla === valor
+                  ? "border-system bg-system-tint text-system"
+                  : "border-line text-muted hover:border-system/50"
+              }`}
+            >
+              <span className="block text-[12.5px] font-medium">{titulo}</span>
+              <span className="block text-[11px] leading-snug opacity-80">{ayuda}</span>
+            </button>
+          ))}
+        </div>
+
+        {esReemplazo ? (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-muted">
+                Donde diga (término actual)
+              </label>
+              <input
+                value={terminoOrigen}
+                onChange={(e) => setTerminoOrigen(e.target.value)}
+                placeholder="MEZCLADORA DOBLE CONO"
+                className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-[13px] text-ink placeholder:text-muted/60 transition-all duration-150 ease-spring focus:border-system focus:shadow-ring focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-muted">
+                Debe decir (término correcto)
+              </label>
+              <input
+                value={terminoDestino}
+                onChange={(e) => setTerminoDestino(e.target.value)}
+                placeholder="MEZCLADORA DE DOBLE CONO"
+                className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-[13px] text-ink placeholder:text-muted/60 transition-all duration-150 ease-spring focus:border-system focus:shadow-ring focus:outline-none"
+              />
+            </div>
+            <p className="text-[11px] leading-snug text-muted sm:col-span-2">
+              Se busca como palabra completa, sin distinguir mayúsculas ni tildes. No consume cuota de
+              IA y no se puede pasar por alto en una revisión.
+            </p>
+          </div>
+        ) : (
         <textarea
           value={texto}
           onChange={(e) => {
@@ -245,6 +337,7 @@ export function PanelReglas({ onVolver }: Props) {
           placeholder='Ej: El texto "CONTROLAR QUE SUS COMPAÑEROS HAGAN LO MISMO" debe reemplazarse por "CONTROLAR QUE SUS COMPAÑEROS REALICEN LO MISMO".'
           className="w-full resize-none rounded-lg border border-line bg-surface px-3 py-2.5 text-[13px] leading-relaxed text-ink placeholder:text-muted/60 transition-all duration-150 ease-spring focus:border-system focus:shadow-ring focus:outline-none"
         />
+        )}
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-[11px] font-medium text-muted">Sección</label>
@@ -278,7 +371,17 @@ export function PanelReglas({ onVolver }: Props) {
           </div>
         </div>
 
-        {!analisis && (
+        {!analisis && esReemplazo && (
+          <button
+            onClick={guardarRegla}
+            disabled={!puedeGuardar || guardando}
+            className="mt-3 min-h-[42px] w-full rounded-lg bg-system px-4 text-[13px] font-medium text-white shadow-soft transition-all duration-150 ease-spring hover:bg-system-light hover:shadow-elevated active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {guardando ? "Guardando…" : "Guardar regla de término"}
+          </button>
+        )}
+
+        {!analisis && !esReemplazo && (
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <button
               onClick={() => revisarConIA()}
@@ -551,6 +654,14 @@ function FilaRegla({
     >
       <p className="text-[13px] leading-snug text-ink/85">{regla.texto}</p>
       <div className="mt-2.5 flex flex-wrap items-center gap-2">
+        {regla.tipo === "reemplazo_termino" && (
+          <span
+            title="Se verifica buscando el término en el documento: no consume cuota de IA y no puede pasarse por alto"
+            className="rounded-full border border-system/40 bg-system-tint px-2 py-0.5 text-[11px] font-medium text-system"
+          >
+            Sin IA
+          </span>
+        )}
         {!regla.activa && (
           <span className="rounded-full bg-paper px-2 py-0.5 text-[11px] font-medium text-muted">
             Desactivada

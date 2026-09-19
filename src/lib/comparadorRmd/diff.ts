@@ -1,4 +1,4 @@
-import type { ItemLista, PasoProcedimiento, RMDExtraido } from "@/types/rmd";
+import type { InsumoItem, ItemLista, PasoProcedimiento, RMDExtraido } from "@/types/rmd";
 import {
   indicesFueraDeOrden,
   palabras,
@@ -65,12 +65,23 @@ export interface DiffItems {
   descripcionDistinta: Array<{ a: ItemLista; b: ItemLista }>;
 }
 
+export interface DiffInsumos {
+  soloEnA: InsumoItem[];
+  soloEnB: InsumoItem[];
+}
+
 export interface DiffRmd {
   pasos: PasoEmparejado[];
   precauciones: DiffLineas;
   notasImportantes: DiffLineas;
   condicionesAmbientales: DiffLineas;
   equiposInstrumentos: DiffItems;
+  /**
+   * Sólo agregados y quitados, por código. Un cambio de cantidad no se
+   * reporta acá porque el contrato de diferencias no tiene un tipo para eso
+   * (hay insumo_agregado e insumo_eliminado, no "insumo_modificado").
+   */
+  insumos: DiffInsumos;
   /** 0..100: proporción de pasos que coinciden en texto y en posición. */
   gradoCoincidencia: number;
 }
@@ -187,6 +198,14 @@ function compararPasos(
 
   // 3. Los que quedaron sin pareja por id: se intenta emparejar por contenido
   //    (un paso renumerado) y lo que sobre es agregado o eliminado.
+  //
+  //    Ojo con el alcance: el emparejamiento por id va primero, así que un
+  //    texto que se movió a otro número mientras ALGUIEN MÁS ocupó el número
+  //    viejo no se ve como renumerado — el número viejo ya quedó emparejado
+  //    con su nuevo contenido y se reporta como modificado. Es lo correcto:
+  //    el mismo número es el mismo lugar del registro, y decir "se modificó
+  //    4.4.2" describe mejor lo que el analista va a ver en SAP que inventar
+  //    un movimiento entre dos pasos que no comparten nada.
   const sinParejaA = pasosA.filter((p) => !porIdB.has(p.id));
   const sinParejaB = pasosB.filter((p) => !porIdA.has(p.id));
   const { pares, restanA, restanB } = emparejarPorTexto(sinParejaA, sinParejaB);
@@ -308,6 +327,15 @@ function calcularGradoCoincidencia(pasos: PasoEmparejado[]): number {
   return Math.round((alineados / total) * 100);
 }
 
+function compararInsumos(insumosA: InsumoItem[], insumosB: InsumoItem[]): DiffInsumos {
+  const codigosA = new Set(insumosA.map((i) => i.codigo).filter(Boolean));
+  const codigosB = new Set(insumosB.map((i) => i.codigo).filter(Boolean));
+  return {
+    soloEnA: insumosA.filter((i) => !i.codigo || !codigosB.has(i.codigo)),
+    soloEnB: insumosB.filter((i) => !i.codigo || !codigosA.has(i.codigo)),
+  };
+}
+
 export function compararRmd(a: RMDExtraido, b: RMDExtraido): DiffRmd {
   const pasos = compararPasos(a.procedimiento, b.procedimiento);
   return {
@@ -316,6 +344,7 @@ export function compararRmd(a: RMDExtraido, b: RMDExtraido): DiffRmd {
     notasImportantes: compararLineas(a.notasImportantes, b.notasImportantes),
     condicionesAmbientales: compararLineas(a.condicionesAmbientales, b.condicionesAmbientales),
     equiposInstrumentos: compararItems(a.equiposInstrumentos, b.equiposInstrumentos),
+    insumos: compararInsumos(a.insumos, b.insumos),
     gradoCoincidencia: calcularGradoCoincidencia(pasos),
   };
 }
