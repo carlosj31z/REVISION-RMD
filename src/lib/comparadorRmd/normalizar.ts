@@ -96,3 +96,46 @@ export function indicesFueraDeOrden(posicionesEnB: number[]): Set<number> {
   for (let i = 0; i < n; i++) if (!enOrden.has(i)) fuera.add(i);
   return fuera;
 }
+
+/**
+ * Palabras que no distinguen a un equipo o insumo de otro: sirven para armar
+ * la frase pero no para reconocerlo dentro de un texto.
+ */
+const PALABRAS_GENERICAS = new Set([
+  "DEL",
+  "LAS",
+  "LOS",
+  "UNA",
+  "CON",
+  "PARA",
+  "POR",
+  "SEGUN",
+  "MODELO",
+  "TIPO",
+  "MARCA",
+  "NRO",
+  "NUMERO",
+]);
+
+/** Las palabras con las que se puede reconocer algo dentro de un texto. */
+export function palabrasDistintivas(texto: string): string[] {
+  return normalizarParaComparar(texto)
+    .replace(/[^A-Z0-9ÑÜ ]+/g, " ")
+    .split(/\s+/)
+    .filter((palabra) => palabra.length >= 3 && !PALABRAS_GENERICAS.has(palabra));
+}
+
+/**
+ * Qué proporción de las palabras de `aguja` aparecen en `pajar`.
+ *
+ * Se usa contención y no una similitud simétrica porque los dos lados tienen
+ * tamaños muy distintos: el nombre de un equipo contra el texto de un paso.
+ * Dice daría siempre un valor bajo aunque el equipo esté claramente
+ * mencionado.
+ */
+export function contencion(aguja: string[], pajar: Set<string>): number {
+  if (aguja.length === 0) return 0;
+  let presentes = 0;
+  for (const palabra of aguja) if (pajar.has(palabra)) presentes++;
+  return presentes / aguja.length;
+}

@@ -1,5 +1,9 @@
 import type { AlertaCoherencia, InsumoItem, PasoProcedimiento, RMDExtraido } from "@/types/rmd";
-import { normalizarParaComparar } from "./comparadorRmd/normalizar";
+import {
+  contencion,
+  normalizarParaComparar,
+  palabrasDistintivas,
+} from "./comparadorRmd/normalizar";
 
 // Alertas de coherencia que se calculan con código, no con el modelo.
 //
@@ -15,52 +19,11 @@ import { normalizarParaComparar } from "./comparadorRmd/normalizar";
 // depender de que el modelo no se distraiga. Los prompts ahora dicen
 // explícitamente que NO reporten estos cuatro tipos, así que no hay duplicados.
 
-/**
- * Palabras que no distinguen a un equipo o insumo de otro: sirven para armar
- * la frase pero no para reconocerlo dentro de un paso.
- */
-const PALABRAS_GENERICAS = new Set([
-  "DEL",
-  "LAS",
-  "LOS",
-  "UNA",
-  "CON",
-  "PARA",
-  "POR",
-  "SEGUN",
-  "MODELO",
-  "TIPO",
-  "MARCA",
-  "NRO",
-  "NUMERO",
-]);
-
-/** Palabras con las que se puede reconocer algo dentro de un texto. */
-function distintivas(texto: string): string[] {
-  return normalizarParaComparar(texto)
-    .replace(/[^A-Z0-9ÑÜ ]+/g, " ")
-    .split(/\s+/)
-    .filter((palabra) => palabra.length >= 3 && !PALABRAS_GENERICAS.has(palabra));
-}
-
-/**
- * Qué proporción de las palabras distintivas de `aguja` aparecen en `pajar`.
- * Se usa contención y no similitud simétrica porque un paso es mucho más
- * largo que el nombre de un equipo: una métrica simétrica (Dice) daría
- * siempre un valor bajo aunque el equipo esté claramente mencionado.
- */
-function contencion(aguja: string[], pajar: Set<string>): number {
-  if (aguja.length === 0) return 0;
-  let presentes = 0;
-  for (const palabra of aguja) if (pajar.has(palabra)) presentes++;
-  return presentes / aguja.length;
-}
-
 /** Desde acá se considera que el paso habla de ese equipo o insumo. */
 const UMBRAL_MENCION = 0.6;
 
 function palabrasDelPaso(paso: PasoProcedimiento): Set<string> {
-  return new Set(distintivas(paso.texto));
+  return new Set(palabrasDistintivas(paso.texto));
 }
 
 // ============================================================
@@ -133,7 +96,7 @@ export function detectarEquiposSinPreparacion(
   const alertas: AlertaCoherencia[] = [];
 
   for (const equipo of rmd.equiposInstrumentos) {
-    const claves = distintivas(equipo.descripcion);
+    const claves = palabrasDistintivas(equipo.descripcion);
     // Sin palabras con las que reconocerlo no se puede afirmar nada: mejor no
     // alertar que alertar sobre una descripción vacía o puramente genérica.
     if (claves.length === 0) continue;
@@ -300,7 +263,7 @@ export function detectarCantidadesQueNoCuadran(
   const seguimiento: Acumulado[] = [];
   for (const insumo of rmd.insumos) {
     const dimension = dimensionDe(insumo.um);
-    const claves = distintivas(insumo.descripcion);
+    const claves = palabrasDistintivas(insumo.descripcion);
     // Sin unidad reconocible o sin palabras con las que reconocerlo, no hay
     // nada que cuadrar.
     if (!dimension || claves.length === 0) continue;

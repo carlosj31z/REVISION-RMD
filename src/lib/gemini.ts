@@ -9,6 +9,7 @@ import type {
   ResultadoVerificacionCorreccion,
 } from "@/types/rmd";
 import { generarJSONConFallback } from "./llmFallback";
+import { acotarMaestroEquipos } from "./maestroEquipos";
 
 function formatearReglas(reglas: ReglaHomologacion[]): string {
   if (reglas.length === 0) return "(no hay reglas permanentes activas para esta sección/etapa)";
@@ -193,6 +194,38 @@ const responseSchema = {
   ],
 };
 
+/**
+ * Bloque de maestro de equipos para el prompt.
+ *
+ * Los RETIRADOS van siempre completos: son los que la regla 4 necesita para
+ * marcar "involucraEquipoRetirado". Los ACTIVOS se acotan a los que el
+ * documento o el Control de Cambios mencionan cuando el maestro es grande
+ * (ver maestroEquipos.ts) — ninguna regla del prompt referencia esa lista, y
+ * trescientos equipos de otras líneas de producción son cuota gastada y ruido
+ * que compite con el documento que sí hay que revisar.
+ */
+function bloqueMaestroEquipos(
+  maestro: EquipoMaestro[],
+  documentos: Array<RMDExtraido | undefined>,
+  textosAdicionales: Array<string | undefined> = []
+): string {
+  const { equipos, omitidos } = acotarMaestroEquipos(maestro, documentos, textosAdicionales);
+  const retirados = equipos.filter((e) => !e.activo);
+  const activos = equipos.filter((e) => e.activo);
+  const nota =
+    omitidos > 0
+      ? `\n\n(Se omitieron ${omitidos} equipos activos del maestro que ni este documento ni el Control de Cambios mencionan. Si necesitás referirte a un equipo que no figura en esta lista, describilo sin inventarle un código.)`
+      : "";
+
+  return `## MAESTRO DE EQUIPOS (fuente de verdad)
+
+Equipos RETIRADOS (inactivos, no deben aparecer en pasos vigentes ni nuevos):
+${retirados.map((e) => `- ${e.codigo}: ${e.descripcion}`).join("\n") || "(ninguno registrado como retirado)"}
+
+Equipos ACTIVOS:
+${activos.map((e) => `- ${e.codigo}: ${e.descripcion}`).join("\n") || "(sin registros)"}${nota}`;
+}
+
 export interface EquipoMaestro {
   codigo: string;
   descripcion: string;
@@ -211,16 +244,7 @@ export interface ComparacionInput {
 export async function compararRMDvsControlCambios(
   input: ComparacionInput
 ): Promise<ResultadoRevisionIA> {
-  const equiposRetirados = input.equiposMaestro.filter((e) => !e.activo);
-  const equiposActivos = input.equiposMaestro.filter((e) => e.activo);
-
-  const textoContenido = `## MAESTRO DE EQUIPOS (fuente de verdad)
-
-Equipos RETIRADOS (inactivos, no deben aparecer en pasos vigentes ni nuevos):
-${equiposRetirados.map((e) => `- ${e.codigo}: ${e.descripcion}`).join("\n") || "(ninguno registrado como retirado)"}
-
-Equipos ACTIVOS:
-${equiposActivos.map((e) => `- ${e.codigo}: ${e.descripcion}`).join("\n") || "(sin registros)"}
+  const textoContenido = `${bloqueMaestroEquipos(input.equiposMaestro, [input.rmdVigente], [input.controlDeCambioTexto])}
 
 ## REGLAS PERMANENTES DE HOMOLOGACIÓN (aplican siempre, no solo hoy)
 
@@ -472,16 +496,7 @@ export interface ComparacionBorradorInput {
 export async function compararRMDvsBorrador(
   input: ComparacionBorradorInput
 ): Promise<ResultadoComparacionBorrador> {
-  const equiposRetirados = input.equiposMaestro.filter((e) => !e.activo);
-  const equiposActivos = input.equiposMaestro.filter((e) => e.activo);
-
-  const textoContenido = `## MAESTRO DE EQUIPOS (fuente de verdad)
-
-Equipos RETIRADOS (inactivos, no deben aparecer en pasos vigentes ni nuevos):
-${equiposRetirados.map((e) => `- ${e.codigo}: ${e.descripcion}`).join("\n") || "(ninguno registrado como retirado)"}
-
-Equipos ACTIVOS:
-${equiposActivos.map((e) => `- ${e.codigo}: ${e.descripcion}`).join("\n") || "(sin registros)"}
+  const textoContenido = `${bloqueMaestroEquipos(input.equiposMaestro, [input.rmdVigente, input.rmdBorrador])}
 
 ## REGLAS PERMANENTES DE HOMOLOGACIÓN (aplican siempre, no solo hoy)
 
@@ -618,16 +633,7 @@ Debes identificar a qué SECCIÓN de producto (SOLIDOS, ACONDICIONADO, CAPSULAS_
 export async function verificarCorreccionVsBorrador(
   input: ComparacionBorradorInput
 ): Promise<ResultadoComparacionBorrador> {
-  const equiposRetirados = input.equiposMaestro.filter((e) => !e.activo);
-  const equiposActivos = input.equiposMaestro.filter((e) => e.activo);
-
-  const textoContenido = `## MAESTRO DE EQUIPOS (fuente de verdad)
-
-Equipos RETIRADOS (inactivos, no deben aparecer en pasos vigentes ni nuevos):
-${equiposRetirados.map((e) => `- ${e.codigo}: ${e.descripcion}`).join("\n") || "(ninguno registrado como retirado)"}
-
-Equipos ACTIVOS:
-${equiposActivos.map((e) => `- ${e.codigo}: ${e.descripcion}`).join("\n") || "(sin registros)"}
+  const textoContenido = `${bloqueMaestroEquipos(input.equiposMaestro, [input.rmdVigente, input.rmdBorrador])}
 
 ## REGLAS PERMANENTES DE HOMOLOGACIÓN (aplican siempre, no solo hoy)
 
@@ -739,16 +745,7 @@ export interface VerificacionSolaInput {
 export async function verificarCumplimientoSolo(
   input: VerificacionSolaInput
 ): Promise<ResultadoComparacionBorrador> {
-  const equiposRetirados = input.equiposMaestro.filter((e) => !e.activo);
-  const equiposActivos = input.equiposMaestro.filter((e) => e.activo);
-
-  const textoContenido = `## MAESTRO DE EQUIPOS (fuente de verdad)
-
-Equipos RETIRADOS (inactivos, no deben aparecer en pasos vigentes ni nuevos):
-${equiposRetirados.map((e) => `- ${e.codigo}: ${e.descripcion}`).join("\n") || "(ninguno registrado como retirado)"}
-
-Equipos ACTIVOS:
-${equiposActivos.map((e) => `- ${e.codigo}: ${e.descripcion}`).join("\n") || "(sin registros)"}
+  const textoContenido = `${bloqueMaestroEquipos(input.equiposMaestro, [input.rmd])}
 
 ## REGLAS PERMANENTES DE HOMOLOGACIÓN (aplican siempre)
 

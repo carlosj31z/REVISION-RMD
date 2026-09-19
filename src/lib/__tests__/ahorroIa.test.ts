@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { huellaEntrada } from "../cacheRevisiones";
 import { decidirAdjuntarPdfRmd } from "../adjuntarPdf";
+import { acotarMaestroEquipos } from "../maestroEquipos";
 import type { RMDExtraido } from "@/types/rmd";
 
 // Las dos piezas que bajan el consumo de cuota sin cambiar lo que el modelo
@@ -146,5 +147,88 @@ describe("decidirAdjuntarPdfRmd", () => {
     const decision = decidirAdjuntarPdfRmd(rmdCompleto(), true);
     assert.equal(decision.adjuntar, true);
     assert.match(decision.motivo, /explícitamente/);
+  });
+});
+
+describe("acotarMaestroEquipos", () => {
+  /** Maestro grande: por debajo del umbral no se acota nada. */
+  function maestroDe(cantidadActivos: number, retirados: string[] = []) {
+    return [
+      ...retirados.map((descripcion, i) => ({
+        codigo: `R${i}`,
+        descripcion,
+        activo: false,
+      })),
+      ...Array.from({ length: cantidadActivos }, (_, i) => ({
+        codigo: `A${i}`,
+        descripcion: `EQUIPO AJENO NUMERO ${i} DE OTRA LINEA`,
+        activo: true,
+      })),
+    ];
+  }
+
+  it("no toca un maestro chico: mismo comportamiento que antes", () => {
+    const maestro = maestroDe(10);
+    const { equipos, omitidos } = acotarMaestroEquipos(maestro, [rmdCompleto()]);
+    assert.equal(omitidos, 0);
+    assert.deepEqual(equipos, maestro);
+  });
+
+  it("en un maestro grande conserva TODOS los retirados", () => {
+    // Son los que la regla 4 del prompt necesita para marcar
+    // involucraEquipoRetirado: nunca se pueden acotar.
+    const maestro = maestroDe(80, ["BOMBO VIEJO", "ENCAPSULADORA RETIRADA"]);
+    const { equipos } = acotarMaestroEquipos(maestro, [rmdCompleto()]);
+
+    const retirados = equipos.filter((e) => !e.activo);
+    assert.equal(retirados.length, 2);
+  });
+
+  it("conserva el activo que el documento menciona y deja afuera el resto", () => {
+    const maestro = [
+      ...maestroDe(80),
+      { codigo: "10001704", descripcion: "MOLINO FITZ MILL", activo: true },
+    ];
+    const rmd = rmdCompleto();
+    rmd.procedimiento[0].texto = "PREPARAR EL MOLINO FITZ MILL SEGUN INSTRUCTIVO ISOL-E202";
+
+    const { equipos, omitidos } = acotarMaestroEquipos(maestro, [rmd]);
+    const codigos = equipos.map((e) => e.codigo);
+
+    assert.ok(codigos.includes("10001704"), "el equipo mencionado tiene que llegar al prompt");
+    assert.equal(omitidos, 80, "los 80 equipos ajenos no viajan");
+  });
+
+  it("conserva el activo citado por su código en un paso", () => {
+    const maestro = [
+      ...maestroDe(80),
+      { codigo: "99887766", descripcion: "UN NOMBRE QUE EL PASO NO USA", activo: true },
+    ];
+    const rmd = rmdCompleto();
+    rmd.procedimiento[0].texto = "PREPARAR EL EQUIPO 99887766 ANTES DE INICIAR EL PROCESO";
+
+    const { equipos } = acotarMaestroEquipos(maestro, [rmd]);
+    assert.ok(equipos.some((e) => e.codigo === "99887766"));
+  });
+
+  it("conserva el activo que menciona el Control de Cambios aunque no esté en el RMD", () => {
+    // Si el CC pide agregar un equipo que el RMD todavía no tiene, ese equipo
+    // tiene que llegar al prompt para que el modelo no le invente el código.
+    const maestro = [
+      ...maestroDe(80),
+      { codigo: "55554444", descripcion: "CODIFICADORA DOMINO A200", activo: true },
+    ];
+
+    const { equipos } = acotarMaestroEquipos(
+      maestro,
+      [rmdCompleto()],
+      ["Instalar la CODIFICADORA DOMINO A200 en la línea de envase."]
+    );
+    assert.ok(equipos.some((e) => e.codigo === "55554444"));
+  });
+
+  it("tolera documentos ausentes", () => {
+    const { equipos } = acotarMaestroEquipos(maestroDe(80), [undefined], [undefined]);
+    assert.equal(equipos.length, 0, "sin documento no hay activo relevante, y no hay retirados");
   });
 });
