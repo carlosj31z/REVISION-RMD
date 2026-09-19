@@ -102,5 +102,9 @@ export async function GET() {
     desde: inicioDeHoyUTC.toISOString(),
     actualizado: new Date().toISOString(),
     proveedores,
+    // Llamadas que NO se hicieron porque la revisión ya estaba analizada con
+    // la misma entrada (ver cacheRevisiones.ts). No es un proveedor: es cuota
+    // ahorrada, y va aparte para no mezclarla con el consumo real.
+    ahorradasPorCache: conteos.get("cache")?.llamadas ?? 0,
   });
 }

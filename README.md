@@ -167,6 +167,82 @@ Abre `http://localhost:3000`.
   que debas aceptar como "mejora" — cambia el contrato de responsabilidad del
   sistema.
 
+## Consumo de cuota de IA
+
+La cuota gratuita de Gemini se agota rápido y el servicio se satura a ciertas
+horas, así que el proyecto reduce deliberadamente cuándo hace falta el modelo.
+Estas son las decisiones, ordenadas por lo que ahorran:
+
+| Qué | Dónde | Efecto |
+| --- | --- | --- |
+| **Caché por huella de la entrada** | `src/lib/cacheRevisiones.ts` | Una entrada ya analizada devuelve el resultado guardado, sin llamada |
+| **Homologación contra RMD de referencia, 100% determinística** | `src/lib/comparadorRmd/homologacion.ts` | `/api/revision-referencia` no consume cuota |
+| **Verificación de correcciones por búsqueda de texto** | `src/lib/comparadorRmd/verificacion.ts` | `/api/verificar-correccion` no consume cuota |
+| **Reglas de término verificadas sin modelo** | `src/lib/reglasReemplazo.ts` | Esas reglas salen del prompt y no se pueden pasar por alto |
+| **El PDF crudo se adjunta sólo si el parseo quedó corto** | `src/lib/adjuntarPdf.ts` | Menos tokens por llamada en las rutas que sí usan el modelo |
+| **Se saltea el modelo si los documentos son idénticos** | `/api/revision-borrador` | Cero llamadas cuando no hay nada que interpretar |
+
+`/api/estado-ia` muestra cuántas llamadas se ahorraron por caché. Para ver
+dónde se va la cuota realmente:
+
+```sql
+select operacion,
+       count(*) filter (where exito) as ok,
+       count(*) filter (where not exito) as fallidas
+from uso_ia
+where proveedor <> 'cache'
+group by 1 order by ok desc;
+```
+
+### Cómo funciona la caché
+
+La huella es un SHA-256 de todo lo que determina el resultado: la estructura
+del RMD, el Control de Cambios, las reglas aplicables, el maestro de equipos
+**y los maestros de los cruces determinísticos** (documentos obsoletos,
+documentos vigentes de los códigos citados, equipos calificados de los equipos
+citados). Incluir los maestros es lo que la hace correcta: si cambia un maestro
+que este documento efectivamente usa, la huella cambia y la revisión se rehace.
+Si sólo se hasheara el prompt, un documento que venció después de la corrida
+seguiría devolviéndose sin su alerta.
+
+`REVISION_CACHE_OFF=1` la apaga. Si la migración `0012` no se aplicó, la caché
+se desactiva sola en vez de romper el guardado.
+
+### Qué sigue necesitando el modelo, y por qué
+
+- **`/api/revision` (RMD vs Control de Cambios).** Leer un CC en prosa y
+  mapearlo a pasos numerados es el trabajo semántico real y es el valor del
+  producto. No se toca.
+- **`/api/revision-borrador`.** Juzgar si un cambio propuesto cumple las reglas
+  permanentes, y leer anotaciones manuscritas del PDF del borrador
+  (`origenAnotacionInformal`), necesita el modelo. Lo mecánico (qué paso se
+  agregó, se quitó, se renumeró o cambió de texto) se calcula aparte y se usa
+  como red de seguridad: si el modelo no reportó una diferencia mecánica, se
+  agrega igual, y la respuesta dice cuántas hubo.
+- **OCR de PDFs escaneados.** Es una tarea de visión.
+
+Lo que se evaluó y se decidió NO hacer: recortar el prompt de
+`/api/revision-borrador` a los pasos que cambiaron. Sería el mayor ahorro de
+esa ruta, pero ese prompt está escrito para recibir dos documentos completos y
+con documentos recortados reportaría como "paso eliminado" todo lo filtrado.
+Requiere reescribir el prompt y validarlo contra documentos reales.
+
+### Lo determinístico frente al modelo
+
+Las comparaciones determinísticas nunca inventan equivalencias y son
+reproducibles, pero tampoco dicen "estos dos pasos redactados distinto
+significan lo mismo, ignoralo". Por eso reportan la diferencia con las dos
+citas al lado y el criterio queda en el analista. En
+`/api/revision-referencia` y `/api/verificar-correccion`, `usarIA: true` en el
+body vuelve al camino con modelo cuando se quiere ese juicio semántico.
+
+En la homologación, `nivelConfianza` cambia de significado respecto de la
+versión con modelo: la detección determinística siempre es certera, así que el
+campo indica si el hallazgo **amerita acción**. Un paso que la referencia no
+tiene y que no se parece a nada suele ser legítimamente propio del producto
+(confianza baja); uno con el mismo número y otra redacción casi siempre hay que
+homologarlo (alta). La justificación siempre dice cuál de los dos casos es.
+
 ## Comparador de configuraciones (sin IA)
 
 Aparte del flujo anterior, el repo incluye un módulo **100% determinístico,
