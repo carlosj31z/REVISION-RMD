@@ -29,45 +29,60 @@ npm install
 ### 2. Supabase
 
 1. Crea un proyecto en [supabase.com](https://supabase.com).
-2. Ve a **SQL Editor** y ejecuta el contenido de `supabase/migrations/0001_init.sql`.
-3. Ve a **Project Settings → API** y copia:
+2. Ve a **Project Settings → API** y copia a `.env.local`:
    - `Project URL` → `SUPABASE_URL`
    - `service_role` key (no la `anon` key) → `SUPABASE_SERVICE_ROLE_KEY`
-4. Crea un bucket de Storage llamado `rmd-pdfs` si vas a persistir los PDFs
-   originales (opcional para el MVP; el flujo actual no lo requiere para
-   funcionar, pero está referenciado en el esquema para cuando lo necesites).
+3. Ve a **Project Settings → Database → Connection string → URI**, reemplaza
+   `[YOUR-PASSWORD]` por la contraseña de la base (no es la `service_role`
+   key; si no la tienes, se resetea en esa misma página) y ponla en
+   `.env.local` como `SUPABASE_DB_URL`.
+4. Aplica el esquema completo:
 
-### 3. Sembrar el maestro de equipos y catálogos
+   ```bash
+   npm run db:push
+   ```
+
+   Aplica todo lo que falte de `supabase/migrations/` en orden, lleva su
+   propia tabla de control (`_migraciones_aplicadas`) y se puede correr las
+   veces que sea: reconoce lo ya aplicado y no lo repite. Útil también para
+   reconstruir el proyecto desde cero si hay que rehacerlo.
+
+   ```bash
+   npm run db:push -- --estado   # qué está aplicado y qué falta, sin tocar nada
+   npm run db:push -- --force    # reaplica todas (son idempotentes)
+   npm run db:push -- --sql      # imprime el SQL completo, sin conectarse
+   ```
+
+   Si no quieres usar la cadena de conexión, `--sql` genera un único bloque
+   pegable en el SQL Editor con el mismo resultado.
+
+No hace falta crear ningún bucket de Storage: el flujo actual no persiste los
+PDFs (las columnas `storage_path_pdf` del esquema están para cuando se
+necesite).
+
+### 3. Cargar los maestros
+
+El esquema queda vacío salvo los catálogos fijos (`secciones` y `etapas`, que
+siembra la migración `0011`). Los maestros con datos reales se cargan así:
+
+| Maestro | Cómo se carga |
+| --- | --- |
+| `documentos_vigentes` | Importando el Excel de control documental desde el panel **Documentos vigentes** de la UI |
+| `equipos_calificados` | Importando el Excel de calificaciones desde el panel **Equipos calificados** de la UI |
+| `documentos_obsoletos` | A mano desde su panel en la UI |
+| `reglas_homologacion` | A mano desde el panel **Reglas** de la UI |
+| `equipos` / `insumos` | Por SQL (todavía sin UI de administración) |
 
 El sistema solo puede advertir sobre "equipo retirado" si la tabla `equipos`
-tiene datos reales. Un ejemplo mínimo para arrancar con la sección SOLIDOS:
+tiene datos reales:
 
 ```sql
-insert into secciones (codigo, nombre) values
-  ('SOLIDOS', 'Sólidos'),
-  ('ACONDICIONADO', 'Acondicionado'),
-  ('CAPSULAS_BLANDAS', 'Cápsulas Blandas'),
-  ('COSMETICOS', 'Cosméticos'),
-  ('INY_HORMONALES', 'Inyectables Hormonales'),
-  ('MENTHOLATUM', 'Mentholatum'),
-  ('POLVOS_EFERVESCENTES', 'Polvos Efervescentes'),
-  ('SEMISOLIDOS', 'Semisólidos'),
-  ('SEMISOLIDOS_HORM', 'Semisólidos Hormonales'),
-  ('SOLIDOS_HORMONALES', 'Sólidos Hormonales'),
-  ('SOLIDOS_4', 'Sólidos 4');
-
-insert into etapas (codigo, nombre) values
-  ('FABRICACION', 'Fabricación'),
-  ('RECUBRIMIENTO', 'Recubrimiento'),
-  ('ENVASE', 'Envase'),
-  ('ACONDICIONADO', 'Acondicionado');
-
--- Ejemplo de equipo activo (ajusta seccion_id/etapa_id según tus UUIDs reales)
 insert into equipos (codigo, descripcion, codigo_referencia, activo)
 values ('10001704', 'BOMBO DE RECUBRIMIENTO JIANGNAN BG150 150kg', 'SOL-E101', true);
 ```
 
-Cuando un Control de Cambios retire un equipo, actualiza el registro:
+Cuando un Control de Cambios retire un equipo, actualiza el registro en vez
+de borrarlo:
 
 ```sql
 update equipos
@@ -75,9 +90,22 @@ set activo = false, retirado_en = now(), retirado_por_cc = 'CC-2026-0042'
 where codigo = '10001704';
 ```
 
-Idealmente esto se hace desde una UI de administración simple (no incluida
-en este MVP, pero el esquema ya está listo para construirla como una tabla
-CRUD estándar sobre Supabase).
+### 3b. Sobre RLS y la clave `anon`
+
+La migración `0010` habilita Row Level Security en todas las tablas **sin
+crear ninguna política**. No es un detalle cosmético: en Supabase una tabla
+creada por SQL nace con RLS apagado y los roles `anon`/`authenticated`
+tienen permisos por defecto sobre el esquema `public`, así que cualquiera con
+la clave `anon` (que es pública por diseño) podría leer y escribir todas las
+tablas vía la API REST.
+
+Esta app no necesita ese acceso: no hay cliente de Supabase en el navegador y
+todas las consultas salen de rutas de API del servidor con la `service_role`
+key, que ignora RLS. Con RLS habilitado y cero políticas, el servidor sigue
+funcionando igual y la clave pública no llega a nada.
+
+Si algún día se agrega un cliente en el navegador, habrá que escribir
+políticas explícitas para lo que ese cliente deba ver.
 
 ### 4. Variables de entorno
 
