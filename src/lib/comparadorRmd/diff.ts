@@ -38,6 +38,17 @@ export interface PasoEmparejado {
   similitud: number;
   /** Emparejados, pero en distinta posición relativa dentro del documento. */
   fueraDeOrden: boolean;
+  /**
+   * Sólo para los pasos sin pareja: el paso MÁS parecido del otro documento,
+   * aunque no haya alcanzado el umbral para emparejarlos, con su similitud.
+   *
+   * Sirve para graduar la confianza del hallazgo. Entre dos RMD de productos
+   * distintos, la mayoría de los pasos legítimamente no tiene equivalente
+   * (cada producto tiene su fórmula, equipos y tiempos), así que un paso sin
+   * nada parecido enfrente casi nunca es un problema; uno que sí tiene un
+   * candidato cercano pero no igual, sí merece una mirada.
+   */
+  mejorCandidato: { paso: PasoProcedimiento; similitud: number } | null;
 }
 
 export interface DiffLineas {
@@ -76,18 +87,32 @@ function indexarPorId(pasos: PasoProcedimiento[]): Map<string, PasoProcedimiento
  * se detecta un paso renumerado. Codicioso sobre el mejor par disponible:
  * se toma la pareja más parecida de todas, se saca del juego, y se repite.
  */
+interface Emparejamiento {
+  pares: Array<{ a: PasoProcedimiento; b: PasoProcedimiento; similitud: number }>;
+  restanA: Array<{ paso: PasoProcedimiento; mejorCandidato: { paso: PasoProcedimiento; similitud: number } | null }>;
+  restanB: Array<{ paso: PasoProcedimiento; mejorCandidato: { paso: PasoProcedimiento; similitud: number } | null }>;
+}
+
 function emparejarPorTexto(
   sinParejaA: PasoProcedimiento[],
   sinParejaB: PasoProcedimiento[]
-): { pares: Array<{ a: PasoProcedimiento; b: PasoProcedimiento; similitud: number }>; restanA: PasoProcedimiento[]; restanB: PasoProcedimiento[] } {
+): Emparejamiento {
   const palabrasA = sinParejaA.map((p) => palabras(p.texto));
   const palabrasB = sinParejaB.map((p) => palabras(p.texto));
 
+  // Se calcula la matriz completa una sola vez: sirve para emparejar y,
+  // después, para saber cuál era el candidato más cercano de los que no
+  // llegaron al umbral.
+  const mejorParaA: Array<{ j: number; s: number } | null> = sinParejaA.map(() => null);
+  const mejorParaB: Array<{ i: number; s: number } | null> = sinParejaB.map(() => null);
   const candidatos: Array<{ i: number; j: number; s: number }> = [];
+
   for (let i = 0; i < sinParejaA.length; i++) {
     for (let j = 0; j < sinParejaB.length; j++) {
       const s = similitud(palabrasA[i], palabrasB[j]);
       if (s >= UMBRAL_EMPAREJAR_POR_TEXTO) candidatos.push({ i, j, s });
+      if (!mejorParaA[i] || s > mejorParaA[i]!.s) mejorParaA[i] = { j, s };
+      if (!mejorParaB[j] || s > mejorParaB[j]!.s) mejorParaB[j] = { i, s };
     }
   }
   candidatos.sort((x, y) => y.s - x.s);
@@ -104,8 +129,22 @@ function emparejarPorTexto(
 
   return {
     pares,
-    restanA: sinParejaA.filter((_, i) => !usadosA.has(i)),
-    restanB: sinParejaB.filter((_, j) => !usadosB.has(j)),
+    restanA: sinParejaA
+      .map((paso, i) => ({
+        paso,
+        i,
+        mejorCandidato: mejorParaA[i] ? { paso: sinParejaB[mejorParaA[i]!.j], similitud: mejorParaA[i]!.s } : null,
+      }))
+      .filter(({ i }) => !usadosA.has(i))
+      .map(({ paso, mejorCandidato }) => ({ paso, mejorCandidato })),
+    restanB: sinParejaB
+      .map((paso, j) => ({
+        paso,
+        j,
+        mejorCandidato: mejorParaB[j] ? { paso: sinParejaA[mejorParaB[j]!.i], similitud: mejorParaB[j]!.s } : null,
+      }))
+      .filter(({ j }) => !usadosB.has(j))
+      .map(({ paso, mejorCandidato }) => ({ paso, mejorCandidato })),
   };
 }
 
@@ -132,6 +171,7 @@ function compararPasos(
       textoIgual: igual,
       similitud: igual ? 1 : similitudTextos(paso.texto, par.texto),
       fueraDeOrden: false, // se calcula abajo, cuando se conocen todos
+      mejorCandidato: null,
     });
   }
 
@@ -161,13 +201,30 @@ function compararPasos(
       // Emparejados por texto: el id cambió, así que hablar de "fuera de
       // orden" no aporta nada sobre el renumerado en sí.
       fueraDeOrden: false,
+      mejorCandidato: null,
     });
   }
-  for (const a of restanA) {
-    emparejados.push({ a, b: null, emparejadoPor: "ninguno", textoIgual: false, similitud: 0, fueraDeOrden: false });
+  for (const { paso, mejorCandidato } of restanA) {
+    emparejados.push({
+      a: paso,
+      b: null,
+      emparejadoPor: "ninguno",
+      textoIgual: false,
+      similitud: 0,
+      fueraDeOrden: false,
+      mejorCandidato,
+    });
   }
-  for (const b of restanB) {
-    emparejados.push({ a: null, b, emparejadoPor: "ninguno", textoIgual: false, similitud: 0, fueraDeOrden: false });
+  for (const { paso, mejorCandidato } of restanB) {
+    emparejados.push({
+      a: null,
+      b: paso,
+      emparejadoPor: "ninguno",
+      textoIgual: false,
+      similitud: 0,
+      fueraDeOrden: false,
+      mejorCandidato,
+    });
   }
 
   return emparejados;

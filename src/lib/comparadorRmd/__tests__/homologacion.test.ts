@@ -89,7 +89,10 @@ describe("comparación contra RMD de referencia", () => {
     assert.equal(sugerencia.pasoIdReferencia, "4.4.4");
     assert.equal(sugerencia.textoEnRmd, null);
     assert.match(sugerencia.textoEnReferencia ?? "", /FPRO-243/);
-    assert.equal(sugerencia.nivelConfianza, "alta");
+    // Nada parecido enfrente: entre productos distintos eso es lo habitual,
+    // así que se reporta pero con confianza baja.
+    assert.equal(sugerencia.nivelConfianza, "baja");
+    assert.match(sugerencia.justificacion, /No hay nada parecido/);
   });
 
   it("marca el paso que el RMD tiene y la referencia no", () => {
@@ -101,7 +104,32 @@ describe("comparación contra RMD de referencia", () => {
     assert.equal(sugerencia.accionSugerida, "eliminar");
     assert.equal(sugerencia.pasoIdRmd, "4.4.4");
     assert.equal(sugerencia.pasoIdReferencia, null);
-    assert.match(sugerencia.justificacion, /evaluá si corresponde mantenerlo/);
+    assert.equal(sugerencia.nivelConfianza, "baja");
+    assert.match(sugerencia.justificacion, /Entre productos distintos eso es lo habitual/);
+  });
+
+  it("sube la confianza cuando hay un paso parecido que no llegó a emparejarse", () => {
+    // Un paso sin pareja pero con algo a medio camino enfrente probablemente
+    // sea el mismo punto del proceso escrito muy distinto: eso sí hay que
+    // mirarlo, a diferencia de un paso sin nada parecido.
+    const evaluado = [
+      ...pasosBase(),
+      { id: "4.4.9", texto: "VERIFICAR LA LIMPIEZA DE LA SALA ANTES DE INICIAR" },
+    ];
+    const referencia = [
+      ...pasosBase(),
+      { id: "4.5.1", texto: "VERIFICAR LA LIMPIEZA Y SANITIZACION DE LOS EQUIPOS UTILIZADOS" },
+    ];
+
+    const resultado = compararContraReferencia(rmd(evaluado), rmd(referencia));
+
+    const sobrante = unica(resultado, "paso_sobrante_en_rmd");
+    assert.equal(sobrante.nivelConfianza, "media");
+    assert.match(sobrante.justificacion, /Lo más parecido en la referencia es el paso 4\.5\.1/);
+
+    const faltante = unica(resultado, "paso_faltante_en_rmd");
+    assert.equal(faltante.nivelConfianza, "media");
+    assert.match(faltante.justificacion, /Lo más parecido en el RMD evaluado es el paso 4\.4\.9/);
   });
 
   it("marca el mismo paso con redacción distinta", () => {

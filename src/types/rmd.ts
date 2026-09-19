@@ -337,6 +337,14 @@ export interface HallazgoAVerificar {
   id: number;
   ubicacionReferencia: string;
   descripcion: string;
+  // Paso al que estaba anclado el hallazgo y cita textual de lo observado.
+  // Son lo que permite verificar la corrección buscando el texto en el
+  // documento corregido, sin gastar una llamada al modelo (ver
+  // comparadorRmd/verificacion.ts). Opcionales porque un hallazgo puede
+  // aplicar a todo el documento o a una sección general, y ahí no hay nada
+  // que buscar.
+  pasoId?: string | null;
+  textoVigente?: string | null;
 }
 
 export interface VerificacionHallazgo {

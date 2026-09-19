@@ -33,6 +33,7 @@ import type {
   ResultadoComparacionBorrador,
   ResultadoComparacionReferencia,
   DestinoPdf,
+  HallazgoAVerificar,
 } from "@/types/rmd";
 
 type EstadoSeguimiento = "pendiente" | "corregido_en_sap" | "descartado";
@@ -634,8 +635,11 @@ export default function Home() {
         // tarjeta (pasoId real, o un id sintético para los que no tienen uno
         // — ver PanelDiscrepancias/PanelDiferenciasBorrador), así la
         // verificación se puede enlazar de vuelta con la tarjeta correcta.
+        // Se manda además el paso y la cita textual de lo observado: con eso
+        // la verificación se resuelve buscando el texto en el documento
+        // corregido, sin gastar una llamada al modelo.
         const clavePorId = new Map<number, string>();
-        const hallazgos: { id: number; ubicacionReferencia: string; descripcion: string }[] = [];
+        const hallazgos: HallazgoAVerificar[] = [];
 
         if (vistaActual.tipo === "resultado") {
           vistaActual.resultado.discrepanciasDetectadas.forEach((d, i) => {
@@ -645,6 +649,8 @@ export default function Home() {
               id: i,
               ubicacionReferencia: d.ubicacionReferencia,
               descripcion: `${d.tipoDiscrepancia}: ${d.queExigeElControlDeCambios}`,
+              pasoId: d.pasoId,
+              textoVigente: d.textoVigenteEnRMD,
             });
           });
         } else {
@@ -655,6 +661,8 @@ export default function Home() {
               id: i,
               ubicacionReferencia: d.ubicacionReferencia,
               descripcion: `${d.tipoDiferencia}: ${d.justificacion}`,
+              pasoId: d.pasoIdVigente,
+              textoVigente: d.textoEnVigente,
             });
           });
         }
@@ -668,7 +676,6 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             rmdCorregido: estructura,
-            pdfCorregidoBase64: pdfBase64,
             hallazgos,
           }),
         });

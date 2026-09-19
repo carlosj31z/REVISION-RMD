@@ -45,10 +45,51 @@ interface SugerenciaOrdenada {
   orden: number;
 }
 
+/**
+ * Qué significa nivelConfianza acá. En la versión con modelo era "qué tan
+ * seguro está el modelo de la detección". Determinísticamente la detección es
+ * siempre certera — el texto está o no está —, así que el campo se usa para
+ * lo que de verdad queda incierto: si el hallazgo AMERITA acción. Un paso que
+ * la referencia no tiene y que no se parece a nada suele ser legítimamente
+ * propio del producto; uno con el mismo número y otra redacción casi siempre
+ * hay que homologarlo. La justificación siempre dice cuál de los dos casos es.
+ */
 function confianzaPorSimilitud(similitud: number): "alta" | "media" | "baja" {
   if (similitud >= 0.9) return "alta";
   if (similitud >= 0.6) return "media";
   return "baja";
+}
+
+/**
+ * Un paso sin pareja se juzga por lo más cercano que haya enfrente: si existe
+ * algo medianamente parecido, probablemente sean el mismo paso del proceso
+ * escrito muy distinto y vale mirarlo; si no hay nada parecido, entre dos
+ * productos distintos eso es lo habitual y casi nunca hay que hacer nada.
+ */
+function describirCandidato(
+  candidato: { paso: { id: string }; similitud: number } | null,
+  dondeBuscar: string
+): { texto: string; confianza: "alta" | "media" | "baja" } {
+  if (candidato && candidato.similitud >= 0.5) {
+    return {
+      confianza: "media",
+      texto:
+        `Lo más parecido en ${dondeBuscar} es el paso ${candidato.paso.id} ` +
+        `(${Math.round(candidato.similitud * 100)}% de palabras en común), que no alcanza para tratarlos como ` +
+        "el mismo paso: revisá si conviene homologarlos.",
+    };
+  }
+  const cuanCerca =
+    candidato && candidato.similitud > 0
+      ? ` (lo más cercano, el paso ${candidato.paso.id}, comparte ${Math.round(candidato.similitud * 100)}% de las palabras)`
+      : "";
+  return {
+    confianza: "baja",
+    texto:
+      `No hay nada parecido en ${dondeBuscar}${cuanCerca}. Entre productos distintos eso es lo habitual, ` +
+      "porque cada uno tiene su fórmula, equipos y tiempos: sólo corresponde actuar si esperabas que los dos " +
+      "documentos llevaran este paso.",
+  };
 }
 
 function sugerenciasDeLineas(
@@ -142,6 +183,7 @@ function sugerenciasDePasos(diff: DiffRmd, rmd: RMDExtraido, referencia: RMDExtr
     if (par.a && par.b && par.textoIgual && !par.fueraDeOrden && par.emparejadoPor === "id") continue;
 
     if (par.a && !par.b) {
+      const cercano = describirCandidato(par.mejorCandidato, "la referencia");
       salida.push({
         orden: posicionEnRmd.get(par.a.id) ?? 0,
         sugerencia: {
@@ -152,15 +194,15 @@ function sugerenciasDePasos(diff: DiffRmd, rmd: RMDExtraido, referencia: RMDExtr
           accionSugerida: "eliminar",
           textoEnRmd: par.a.texto,
           textoEnReferencia: null,
-          justificacion:
-            "La referencia no tiene ningún paso equivalente a este (ni con el mismo número ni con contenido parecido): evaluá si corresponde mantenerlo.",
-          nivelConfianza: "alta",
+          justificacion: `La referencia no tiene un paso equivalente a este. ${cercano.texto}`,
+          nivelConfianza: cercano.confianza,
         },
       });
       continue;
     }
 
     if (!par.a && par.b) {
+      const cercano = describirCandidato(par.mejorCandidato, "el RMD evaluado");
       salida.push({
         orden: ordenParaFaltante(par.b.id),
         sugerencia: {
@@ -171,8 +213,8 @@ function sugerenciasDePasos(diff: DiffRmd, rmd: RMDExtraido, referencia: RMDExtr
           accionSugerida: "incluir",
           textoEnRmd: null,
           textoEnReferencia: par.b.texto,
-          justificacion: `La referencia tiene el paso ${par.b.id} y el RMD evaluado no tiene ninguno equivalente: evaluá incluirlo.`,
-          nivelConfianza: "alta",
+          justificacion: `La referencia tiene el paso ${par.b.id} y el RMD evaluado no tiene ninguno equivalente. ${cercano.texto}`,
+          nivelConfianza: cercano.confianza,
         },
       });
       continue;
