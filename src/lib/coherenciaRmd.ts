@@ -1,4 +1,10 @@
-import type { AlertaCoherencia, InsumoItem, PasoProcedimiento, RMDExtraido } from "@/types/rmd";
+import type {
+  AlertaCoherencia,
+  InsumoItem,
+  PasoProcedimiento,
+  RMDExtraido,
+  SeccionGeneral,
+} from "@/types/rmd";
 import {
   contencion,
   normalizarParaComparar,
@@ -351,10 +357,135 @@ export function detectarCantidadesQueNoCuadran(
   return alertas;
 }
 
+
+// ============================================================
+// 5. Fallas de redacción que no necesitan criterio
+// ============================================================
+//
+// La regla de fallas de redacción sigue siendo del modelo: decidir si una frase
+// es ambigua, si falta una palabra o si la puntuación cambió el sentido es
+// exactamente el tipo de juicio que hay que pedirle. Pero dos casos de esa
+// misma regla son mecánicos y el modelo los saltea seguido, porque son
+// visualmente discretos en medio de un párrafo largo.
+//
+// Se buscan sobre el texto ORIGINAL (no el normalizado) para que la cita salga
+// tal cual está escrita y el visor pueda resaltar esa frase exacta.
+
+const LETRAS = "A-Za-zÁÉÍÓÚÜÑáéíóúüñ";
+
+/**
+ * La misma palabra dos veces seguidas. Con la bandera `i` la retrorreferencia
+ * compara sin distinguir mayúsculas, así que agarra "EL el".
+ *
+ * Se piden dos letras como mínimo, no tres: los duplicados que de verdad
+ * aparecen al redactar son justamente los cortos ("DE DE", "EL EL", "EN EN").
+ * Los números quedan afuera solos por la clase de caracteres, así que un
+ * "N° 1 1" no se marca. En un documento redactado todo en mayúsculas, dos
+ * palabras iguales pegadas siempre son un error de tipeo.
+ */
+const PALABRA_REPETIDA = new RegExp(
+  `(?<![${LETRAS}])([${LETRAS}]{2,})(\\s+)\\1(?![${LETRAS}])`,
+  "gi"
+);
+
+function citaAlrededor(texto: string, inicio: number, fin: number, contexto = 45): string {
+  return texto.slice(Math.max(0, inicio - contexto), Math.min(texto.length, fin + contexto)).trim();
+}
+
+interface FragmentoRevisable {
+  texto: string;
+  pasoId: string | null;
+  seccionGeneral: SeccionGeneral | null;
+  ubicacion: string;
+}
+
+function fragmentosRevisables(rmd: RMDExtraido): FragmentoRevisable[] {
+  const fragmentos: FragmentoRevisable[] = rmd.procedimiento.map((paso) => ({
+    texto: paso.texto,
+    pasoId: paso.id,
+    seccionGeneral: null,
+    ubicacion: `Paso ${paso.id}`,
+  }));
+
+  const secciones: Array<[string[], SeccionGeneral, string]> = [
+    [rmd.precauciones, "precauciones", "PRECAUCIONES"],
+    [rmd.notasImportantes, "notas_importantes", "NOTAS IMPORTANTES"],
+    [rmd.condicionesAmbientales, "condiciones_ambientales", "CONDICIONES AMBIENTALES"],
+  ];
+  for (const [lineas, seccionGeneral, nombre] of secciones) {
+    lineas.forEach((texto, indice) => {
+      fragmentos.push({
+        texto,
+        pasoId: null,
+        seccionGeneral,
+        ubicacion: `${nombre}, línea ${indice + 1}`,
+      });
+    });
+  }
+
+  return fragmentos;
+}
+
+export function detectarFallasRedaccionMecanicas(
+  rmd: RMDExtraido,
+  etiquetaDocumento?: string
+): AlertaCoherencia[] {
+  const sufijo = etiquetaDocumento ? ` en el ${etiquetaDocumento}` : "";
+  const alertas: AlertaCoherencia[] = [];
+
+  for (const fragmento of fragmentosRevisables(rmd)) {
+    const { texto } = fragmento;
+
+    // Palabra repetida.
+    PALABRA_REPETIDA.lastIndex = 0;
+    const vistas = new Set<string>();
+    for (const match of texto.matchAll(PALABRA_REPETIDA)) {
+      const palabra = match[1].toUpperCase();
+      if (vistas.has(palabra)) continue;
+      vistas.add(palabra);
+      alertas.push({
+        tipo: "falla_redaccion",
+        descripcion:
+          `La palabra "${match[1]}" aparece dos veces seguidas en ${fragmento.ubicacion}${sufijo}: ` +
+          `"${match[0].replace(/\s+/g, " ")}".`,
+        pasosAfectados: fragmento.pasoId ? [fragmento.pasoId] : [],
+        // No cambia lo que hay que hacer en planta, pero se corrige en un
+        // minuto y queda por escrito en un documento GMP.
+        severidad: "baja",
+        pasoId: fragmento.pasoId,
+        seccionGeneral: fragmento.seccionGeneral,
+        citaTextual: citaAlrededor(texto, match.index ?? 0, (match.index ?? 0) + match[0].length),
+      });
+    }
+
+    // Paréntesis sin cerrar. Importa porque en estos documentos los paréntesis
+    // delimitan rangos y especificaciones: "(15 °C - 25 °C" deja sin cerrar el
+    // criterio de aceptación.
+    const abre = (texto.match(/\(/g) ?? []).length;
+    const cierra = (texto.match(/\)/g) ?? []).length;
+    if (abre !== cierra) {
+      alertas.push({
+        tipo: "falla_redaccion",
+        descripcion:
+          `Paréntesis desbalanceados en ${fragmento.ubicacion}${sufijo}: ${abre} de apertura y ` +
+          `${cierra} de cierre. En estos documentos los paréntesis delimitan rangos y ` +
+          "especificaciones, así que uno sin cerrar deja el criterio a medias.",
+        pasosAfectados: fragmento.pasoId ? [fragmento.pasoId] : [],
+        severidad: "media",
+        pasoId: fragmento.pasoId,
+        seccionGeneral: fragmento.seccionGeneral,
+        citaTextual: texto.trim().slice(0, 200),
+      });
+    }
+  }
+
+  return alertas;
+}
+
 // ============================================================
 
 /**
- * Las cuatro verificaciones mecánicas de coherencia, en un solo lugar.
+ * Las verificaciones mecánicas de coherencia, en un solo lugar.
  * `etiquetaDocumento` distingue el origen cuando se corren sobre dos
  * documentos (ej. "borrador de Producción"), igual que los cruces de
  * documentos obsoletos y equipos calificados.
@@ -368,5 +499,6 @@ export function detectarAlertasCoherencia(
     ...detectarEquiposSinPreparacion(rmd, etiquetaDocumento),
     ...detectarNotaVbFaltante(rmd, etiquetaDocumento),
     ...detectarCantidadesQueNoCuadran(rmd, etiquetaDocumento),
+    ...detectarFallasRedaccionMecanicas(rmd, etiquetaDocumento),
   ];
 }

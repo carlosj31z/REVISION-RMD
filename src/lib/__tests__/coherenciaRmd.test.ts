@@ -7,6 +7,7 @@ import {
   detectarCantidadesQueNoCuadran,
   detectarCitasInternasRotas,
   detectarEquiposSinPreparacion,
+  detectarFallasRedaccionMecanicas,
   detectarNotaVbFaltante,
 } from "../coherenciaRmd";
 
@@ -382,5 +383,83 @@ describe("las cuatro verificaciones juntas", () => {
 
   it("no devuelve nada sobre un documento vacío", () => {
     assert.deepEqual(detectarAlertasCoherencia(rmd([])), []);
+  });
+});
+
+describe("fallas de redacción mecánicas", () => {
+  it("detecta la misma palabra dos veces seguidas y cita la frase", () => {
+    const alertas = detectarFallasRedaccionMecanicas(
+      rmd([{ id: "4.4.1", texto: "PESAR EL EL PRINCIPIO ACTIVO EN LA BALANZA CALIBRADA" }])
+    );
+
+    assert.equal(alertas.length, 1);
+    assert.equal(alertas[0].tipo, "falla_redaccion");
+    assert.equal(alertas[0].severidad, "baja");
+    assert.equal(alertas[0].pasoId, "4.4.1");
+    assert.match(alertas[0].descripcion, /"EL" aparece dos veces seguidas/);
+    assert.match(alertas[0].citaTextual ?? "", /EL EL PRINCIPIO/);
+  });
+
+  it("compara la repetición sin distinguir mayúsculas", () => {
+    const alertas = detectarFallasRedaccionMecanicas(
+      rmd([{ id: "4.4.1", texto: "Tamizar por tamiz Tamiz de acero" }])
+    );
+    assert.equal(alertas.length, 1);
+    assert.match(alertas[0].descripcion, /dos veces seguidas/);
+  });
+
+  it("no marca un número repetido", () => {
+    // "N° 1 1" queda afuera solo: la clase de caracteres del regex sólo admite
+    // letras.
+    const alertas = detectarFallasRedaccionMecanicas(
+      rmd([{ id: "4.4.1", texto: "USAR EL TAMIZ N° 1 1 DE ACERO" }])
+    );
+    assert.deepEqual(alertas, []);
+  });
+
+  it("no marca una palabra repetida que no está pegada", () => {
+    const alertas = detectarFallasRedaccionMecanicas(
+      rmd([{ id: "4.4.1", texto: "TAMIZAR CON EL TAMIZ Y LUEGO LIMPIAR EL TAMIZ" }])
+    );
+    assert.deepEqual(alertas, []);
+  });
+
+  it("detecta paréntesis sin cerrar", () => {
+    const alertas = detectarFallasRedaccionMecanicas(
+      rmd([{ id: "4.4.1", texto: "CONTROLAR LA TEMPERATURA (15 °C - 25 °C DURANTE EL PROCESO" }])
+    );
+
+    assert.equal(alertas.length, 1);
+    assert.equal(alertas[0].severidad, "media");
+    assert.match(alertas[0].descripcion, /1 de apertura y 0 de cierre/);
+  });
+
+  it("no marca los paréntesis balanceados", () => {
+    const alertas = detectarFallasRedaccionMecanicas(
+      rmd([{ id: "4.4.1", texto: "CONTROLAR LA TEMPERATURA (15 °C - 25 °C) Y LA HUMEDAD (25 % - 40 %)" }])
+    );
+    assert.deepEqual(alertas, []);
+  });
+
+  it("revisa también precauciones, notas y condiciones ambientales", () => {
+    const alertas = detectarFallasRedaccionMecanicas(
+      rmd([], {
+        precauciones: ["USAR EL EL UNIFORME COMPLETO"],
+        notasImportantes: ["RESPETAR LOS TIEMPOS (SEGUN CADA PASO"],
+        condicionesAmbientales: ["TEMPERATURA (15 °C - 25 °C)"],
+      })
+    );
+
+    assert.deepEqual(
+      alertas.map((a) => a.seccionGeneral),
+      ["precauciones", "notas_importantes"]
+    );
+  });
+
+  it("no repite la misma palabra repetida dos veces en el mismo fragmento", () => {
+    const alertas = detectarFallasRedaccionMecanicas(
+      rmd([{ id: "4.4.1", texto: "PESAR EL EL ACTIVO Y LUEGO TAMIZAR EL EL ACTIVO" }])
+    );
+    assert.equal(alertas.length, 1);
   });
 });
