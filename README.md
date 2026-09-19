@@ -29,45 +29,60 @@ npm install
 ### 2. Supabase
 
 1. Crea un proyecto en [supabase.com](https://supabase.com).
-2. Ve a **SQL Editor** y ejecuta el contenido de `supabase/migrations/0001_init.sql`.
-3. Ve a **Project Settings → API** y copia:
+2. Ve a **Project Settings → API** y copia a `.env.local`:
    - `Project URL` → `SUPABASE_URL`
    - `service_role` key (no la `anon` key) → `SUPABASE_SERVICE_ROLE_KEY`
-4. Crea un bucket de Storage llamado `rmd-pdfs` si vas a persistir los PDFs
-   originales (opcional para el MVP; el flujo actual no lo requiere para
-   funcionar, pero está referenciado en el esquema para cuando lo necesites).
+3. Ve a **Project Settings → Database → Connection string → URI**, reemplaza
+   `[YOUR-PASSWORD]` por la contraseña de la base (no es la `service_role`
+   key; si no la tienes, se resetea en esa misma página) y ponla en
+   `.env.local` como `SUPABASE_DB_URL`.
+4. Aplica el esquema completo:
 
-### 3. Sembrar el maestro de equipos y catálogos
+   ```bash
+   npm run db:push
+   ```
+
+   Aplica todo lo que falte de `supabase/migrations/` en orden, lleva su
+   propia tabla de control (`_migraciones_aplicadas`) y se puede correr las
+   veces que sea: reconoce lo ya aplicado y no lo repite. Útil también para
+   reconstruir el proyecto desde cero si hay que rehacerlo.
+
+   ```bash
+   npm run db:push -- --estado   # qué está aplicado y qué falta, sin tocar nada
+   npm run db:push -- --force    # reaplica todas (son idempotentes)
+   npm run db:push -- --sql      # imprime el SQL completo, sin conectarse
+   ```
+
+   Si no quieres usar la cadena de conexión, `--sql` genera un único bloque
+   pegable en el SQL Editor con el mismo resultado.
+
+No hace falta crear ningún bucket de Storage: el flujo actual no persiste los
+PDFs (las columnas `storage_path_pdf` del esquema están para cuando se
+necesite).
+
+### 3. Cargar los maestros
+
+El esquema queda vacío salvo los catálogos fijos (`secciones` y `etapas`, que
+siembra la migración `0011`). Los maestros con datos reales se cargan así:
+
+| Maestro | Cómo se carga |
+| --- | --- |
+| `documentos_vigentes` | Importando el Excel de control documental desde el panel **Documentos vigentes** de la UI |
+| `equipos_calificados` | Importando el Excel de calificaciones desde el panel **Equipos calificados** de la UI |
+| `documentos_obsoletos` | A mano desde su panel en la UI |
+| `reglas_homologacion` | A mano desde el panel **Reglas** de la UI |
+| `equipos` / `insumos` | Por SQL (todavía sin UI de administración) |
 
 El sistema solo puede advertir sobre "equipo retirado" si la tabla `equipos`
-tiene datos reales. Un ejemplo mínimo para arrancar con la sección SOLIDOS:
+tiene datos reales:
 
 ```sql
-insert into secciones (codigo, nombre) values
-  ('SOLIDOS', 'Sólidos'),
-  ('ACONDICIONADO', 'Acondicionado'),
-  ('CAPSULAS_BLANDAS', 'Cápsulas Blandas'),
-  ('COSMETICOS', 'Cosméticos'),
-  ('INY_HORMONALES', 'Inyectables Hormonales'),
-  ('MENTHOLATUM', 'Mentholatum'),
-  ('POLVOS_EFERVESCENTES', 'Polvos Efervescentes'),
-  ('SEMISOLIDOS', 'Semisólidos'),
-  ('SEMISOLIDOS_HORM', 'Semisólidos Hormonales'),
-  ('SOLIDOS_HORMONALES', 'Sólidos Hormonales'),
-  ('SOLIDOS_4', 'Sólidos 4');
-
-insert into etapas (codigo, nombre) values
-  ('FABRICACION', 'Fabricación'),
-  ('RECUBRIMIENTO', 'Recubrimiento'),
-  ('ENVASE', 'Envase'),
-  ('ACONDICIONADO', 'Acondicionado');
-
--- Ejemplo de equipo activo (ajusta seccion_id/etapa_id según tus UUIDs reales)
 insert into equipos (codigo, descripcion, codigo_referencia, activo)
 values ('10001704', 'BOMBO DE RECUBRIMIENTO JIANGNAN BG150 150kg', 'SOL-E101', true);
 ```
 
-Cuando un Control de Cambios retire un equipo, actualiza el registro:
+Cuando un Control de Cambios retire un equipo, actualiza el registro en vez
+de borrarlo:
 
 ```sql
 update equipos
@@ -75,9 +90,22 @@ set activo = false, retirado_en = now(), retirado_por_cc = 'CC-2026-0042'
 where codigo = '10001704';
 ```
 
-Idealmente esto se hace desde una UI de administración simple (no incluida
-en este MVP, pero el esquema ya está listo para construirla como una tabla
-CRUD estándar sobre Supabase).
+### 3b. Sobre RLS y la clave `anon`
+
+La migración `0010` habilita Row Level Security en todas las tablas **sin
+crear ninguna política**. No es un detalle cosmético: en Supabase una tabla
+creada por SQL nace con RLS apagado y los roles `anon`/`authenticated`
+tienen permisos por defecto sobre el esquema `public`, así que cualquiera con
+la clave `anon` (que es pública por diseño) podría leer y escribir todas las
+tablas vía la API REST.
+
+Esta app no necesita ese acceso: no hay cliente de Supabase en el navegador y
+todas las consultas salen de rutas de API del servidor con la `service_role`
+key, que ignora RLS. Con RLS habilitado y cero políticas, el servidor sigue
+funcionando igual y la clave pública no llega a nada.
+
+Si algún día se agrega un cliente en el navegador, habrá que escribir
+políticas explícitas para lo que ese cliente deba ver.
 
 ### 4. Variables de entorno
 
@@ -138,3 +166,73 @@ Abre `http://localhost:3000`.
   citas/descripciones, es una señal de que el prompt necesita ajuste, no algo
   que debas aceptar como "mejora" — cambia el contrato de responsabilidad del
   sistema.
+
+## Comparador de configuraciones (sin IA)
+
+Aparte del flujo anterior, el repo incluye un módulo **100% determinístico,
+sin ninguna llamada a IA**, para comparar el archivo de "Configuración" (el
+export del sistema digital) de un producto de referencia ya autorizado contra
+el de un producto en desarrollo, antes de mandar el RMD a Validaciones.
+
+- **Módulo:** `src/lib/comparadorConfiguracion/`, con
+  `compareConfigurations(referenceBuffer, targetBuffer)` como punto de entrada.
+- **Tipos:** `src/types/configuracion.ts` (`ComparisonReport`).
+- **Endpoint:** `POST /api/comparar-configuracion` — recibe los dos archivos
+  como `multipart/form-data` en los campos `referencia` y `objetivo`, y
+  devuelve `{ reporte }` con el `ComparisonReport` en JSON.
+- **CLI:**
+
+  ```bash
+  npm run compare-config -- referencia.xlsx objetivo.xlsx
+  npm run compare-config -- referencia.xlsx objetivo.xlsx --solo-errores
+  npm run compare-config -- referencia.xlsx objetivo.xlsx --json > informe.json
+  ```
+
+  Termina con código 1 si el archivo objetivo tiene errores, para poder usarlo
+  como verificación previa en un script.
+- **Tests:** `npm test` (runner nativo de Node vía `tsx`; requiere Node 20+).
+  Los casos son hojas sintéticas armadas en código, sin `.xlsx` de fixture.
+
+### Qué valida
+
+1. **Integridad de la cadena `Depende → Cod.`** — el `Depende` de un ítem
+   apunta al `Cod.` del ítem que debe completarse justo antes, formando la
+   secuencia real de ejecución del registro. Se distingue el *enlace roto*
+   (apunta a un `Cod.` que no existe antes: error) del *branch-back* (retoma
+   un ítem anterior que sí existe, típico del inicio de una subsección).
+2. **Numeración de `Orden`** — que la `N` de cada nivel (`6.4.N`,
+   `6.4.31.N`) sea consecutiva, sin saltos ni duplicados. Los `Orden` de un
+   solo nivel se agrupan por sección, así que las subsecciones cortas
+   (PRECAUCIONES, NOTAS IMPORTANTES, CONDICIONES AMBIENTALES) pueden
+   reiniciar en 1 sin que cuente como salto.
+3. **Columnas `Tipo Dato` / `Val. Inicial` / `Val. Final` / `# Decimales`** —
+   todo `Rango` con los dos extremos numéricos y `Val. Inicial < Val. Final`;
+   todo `Rango` y todo `Números` con `# Decimales` definido; los extremos
+   vacíos en cualquier tipo que no sea `Rango`; y ningún `Tipo Dato` en el
+   objetivo que no exista también en la referencia.
+4. **Cruce por `Cod.` compartido** — el mismo `Cod.` configurado distinto en
+   cada archivo (advertencia: puede ser un cambio intencional), y el `Cod.`
+   repetido dentro de un mismo archivo con definiciones distintas entre sus
+   propias apariciones (inconsistencia interna).
+5. **Diff estructural** — qué `Cod.` existe sólo en la referencia (paso
+   eliminado) y qué `Cod.` sólo en el objetivo (paso agregado).
+
+### Decisiones de diseño del comparador
+
+- **La referencia es la línea base, no un archivo exento.** Se valida también
+  a ella y sus hallazgos se informan, pero no bloquean al objetivo:
+  `resumen.sinErroresBloqueantes` sólo mira los errores atribuibles al
+  archivo objetivo. Un branch-back que la referencia ya trae en la misma
+  posición baja a informativo en el objetivo, porque es el patrón esperado
+  del registro y no un defecto del producto nuevo.
+- **`Cod.` no es único dentro de un archivo.** El mismo campo del sistema
+  (ej. "HUMEDAD RELATIVA") se reutiliza en varias etapas, así que un
+  `Depende` se resuelve a la **aparición anterior más cercana** de ese `Cod.`,
+  y el análisis de huérfanos trabaja por posición y no por código.
+- **El núcleo no conoce Excel.** Todo trabaja sobre una matriz de celdas;
+  SheetJS queda aislado en `parser.ts` (`leerMatriz`). Eso es lo que permite
+  testear con casos sintéticos y cambiar de librería tocando un solo archivo.
+- **Las columnas se identifican por su encabezado, no por su posición**, para
+  que un cambio de orden en el export falle de forma visible en vez de
+  devolver datos corridos. El título de sección se acepta tanto en la
+  columna `#` (que es donde viene hoy) como en `Orden`.
