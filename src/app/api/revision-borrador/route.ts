@@ -10,6 +10,7 @@ import { cargarReglasAplicables } from "@/lib/reglas";
 import { aDiferenciasBorrador, detectarTerminosSinHomologar, separarReglas } from "@/lib/reglasReemplazo";
 import { diferenciasMecanicas, fusionarConMecanicas } from "@/lib/comparadorRmd/borrador";
 import { detectarAlertasCoherencia } from "@/lib/coherenciaRmd";
+import { encolarSiElTiempoLoResuelve } from "@/lib/colaTrabajos";
 import { decidirAdjuntarPdfRmd } from "@/lib/adjuntarPdf";
 import { buscarRevisionEnCache, huellaEntrada, huellaParaGuardar } from "@/lib/cacheRevisiones";
 import {
@@ -53,6 +54,8 @@ interface RevisionBorradorRequestBody {
   // Adjunta el PDF del RMD vigente al modelo aunque el parseo se vea completo
   // (el del borrador va siempre: es donde están las anotaciones manuscritas).
   forzarPdf?: boolean;
+  // Lo pone el worker de la cola al reintentar (ver /api/trabajos/procesar).
+  _trabajoId?: string;
 }
 
 /**
@@ -197,6 +200,7 @@ export async function POST(req: NextRequest) {
         requiereRevisionHumana: false,
       };
     } else {
+      try {
       resultadoIA = body.rmdBorrador
         ? await comparar({
             rmdVigente: body.rmdVigente,
@@ -215,6 +219,18 @@ export async function POST(req: NextRequest) {
             equiposMaestro,
             reglas: reglasLibres,
           });
+      } catch (err) {
+        // Proveedores saturados o sin cuota: a la cola, con la entrada completa.
+        const encolado = await encolarSiElTiempoLoResuelve(supabase, err, {
+          operacion: "revision_borrador",
+          payload: body as unknown as Record<string, unknown>,
+          huella,
+          creadoPor: body.creadoPor,
+          yaEsReintento: Boolean(body._trabajoId),
+        });
+        if (encolado) return NextResponse.json({ encolado: true, ...encolado }, { status: 202 });
+        throw err;
+      }
 
       // Red de seguridad: se agrega toda diferencia mecánica sobre la que el
       // modelo no dijo nada. Mismo patrón que el recálculo de equipos

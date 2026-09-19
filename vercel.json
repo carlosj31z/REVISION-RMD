@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/trabajos/procesar",
+      "schedule": "0 * * * *"
+    }
+  ]
+}

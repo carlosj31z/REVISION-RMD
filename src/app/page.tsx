@@ -134,6 +134,15 @@ type VistaActual =
   | { tipo: "nomenclaturas" }
   | { tipo: "cargando"; mensaje: string }
   | { tipo: "error"; mensaje: string }
+  // Los proveedores de IA estaban saturados o sin cuota: el análisis quedó en
+  // cola y el software lo reintenta solo. Se guarda lo necesario para abrir la
+  // sesión cuando termine, así el analista no vuelve a subir nada.
+  | {
+      tipo: "encolado";
+      trabajoId: string;
+      mensaje: string;
+      abrirAlTerminar: (resultado: any, revisionId: string | null) => void;
+    }
   // Muestra la sesión activa (ver sesionActivaId).
   | { tipo: "sesion" };
 
@@ -387,14 +396,29 @@ export default function Home() {
 
         const data = await leerRespuestaApi(revisionRes);
 
-        abrirNuevaSesion({
-          tipo: "resultado",
-          rmd: estructura,
-          pdfUrl: URL.createObjectURL(input.rmdFile),
-          resultado: data.resultado,
-          revisionId: data.revisionId ?? null,
-          archivoVigente: input.rmdFile,
-        });
+        // 202: la IA estaba saturada y el trabajo quedó en cola. No es un
+        // error — se avisa y se espera, sin pedirle al analista que repita nada.
+        const abrirConResultado = (resultado: any, revisionId: string | null) =>
+          abrirNuevaSesion({
+            tipo: "resultado",
+            rmd: estructura,
+            pdfUrl: URL.createObjectURL(input.rmdFile),
+            resultado,
+            revisionId,
+            archivoVigente: input.rmdFile,
+          });
+
+        if (data.encolado) {
+          setVista({
+            tipo: "encolado",
+            trabajoId: data.trabajoId,
+            mensaje: data.mensaje,
+            abrirAlTerminar: abrirConResultado,
+          });
+          return;
+        }
+
+        abrirConResultado(data.resultado, data.revisionId ?? null);
       } catch (err: any) {
         setVista({ tipo: "error", mensaje: err.message ?? "Ocurrió un error inesperado." });
       }
@@ -491,22 +515,36 @@ export default function Home() {
 
         const data = await leerRespuestaApi(revisionRes);
 
-        abrirNuevaSesion({
-          tipo: "resultado-borrador",
-          rmd: estructuraVigente,
-          pdfUrl: URL.createObjectURL(input.rmdVigenteFile),
-          archivoVigente: input.rmdVigenteFile,
-          resultado: data.resultado,
-          revisionId: data.revisionId ?? null,
-          conBorrador: !!estructuraBorrador,
-          esCorregido,
-          pdfBorradorUrl: input.rmdBorradorFile
-            ? URL.createObjectURL(input.rmdBorradorFile)
-            : undefined,
-          archivoBorrador: input.rmdBorradorFile,
-          rmdBorrador: estructuraBorrador ?? undefined,
-          avisosExtraccion: avisos.length > 0 ? avisos : undefined,
-        });
+        const abrirConResultado = (resultado: any, revisionId: string | null) =>
+          abrirNuevaSesion({
+            tipo: "resultado-borrador",
+            rmd: estructuraVigente,
+            pdfUrl: URL.createObjectURL(input.rmdVigenteFile),
+            archivoVigente: input.rmdVigenteFile,
+            resultado,
+            revisionId,
+            conBorrador: !!estructuraBorrador,
+            esCorregido,
+            pdfBorradorUrl: input.rmdBorradorFile
+              ? URL.createObjectURL(input.rmdBorradorFile)
+              : undefined,
+            archivoBorrador: input.rmdBorradorFile,
+            rmdBorrador: estructuraBorrador ?? undefined,
+            avisosExtraccion: avisos.length > 0 ? avisos : undefined,
+          });
+
+        // 202: los proveedores estaban saturados y el trabajo quedó en cola.
+        if (data.encolado) {
+          setVista({
+            tipo: "encolado",
+            trabajoId: data.trabajoId,
+            mensaje: data.mensaje,
+            abrirAlTerminar: abrirConResultado,
+          });
+          return;
+        }
+
+        abrirConResultado(data.resultado, data.revisionId ?? null);
       } catch (err: any) {
         setVista({ tipo: "error", mensaje: err.message ?? "Ocurrió un error inesperado." });
       }
@@ -952,6 +990,58 @@ export default function Home() {
     []
   );
 
+  // Mientras un trabajo esté en cola se consulta cada tanto y, cuando el worker
+  // lo resuelve, la sesión se abre sola sin que el analista vuelva a subir nada.
+  // Esto sólo corre con la pestaña abierta; si se cierra, el trabajo igual sigue
+  // en el servidor y su resultado queda guardado con la huella de la entrada,
+  // así que volver a subir el mismo documento lo devuelve al instante por caché.
+  const [estadoTrabajo, setEstadoTrabajo] = useState<{
+    intentos: number;
+    ultimoError: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    if (vista.tipo !== "encolado") {
+      setEstadoTrabajo(null);
+      return;
+    }
+    const trabajoId = vista.trabajoId;
+    const abrirAlTerminar = vista.abrirAlTerminar;
+    let cancelado = false;
+
+    const consultar = async () => {
+      try {
+        const res = await fetch(`/api/trabajos/${trabajoId}`);
+        if (!res.ok || cancelado) return;
+        const data = await res.json();
+        if (cancelado) return;
+
+        setEstadoTrabajo({ intentos: data.intentos ?? 0, ultimoError: data.ultimoError ?? null });
+
+        if (data.estado === "completado" && data.resultado?.resultado) {
+          abrirAlTerminar(data.resultado.resultado, data.resultado.revisionId ?? null);
+        } else if (data.estado === "fallido") {
+          setVista({
+            tipo: "error",
+            mensaje:
+              `El análisis se reintentó ${data.intentos} veces durante más de un día y los ` +
+              `proveedores de IA siguieron sin responder. Último error: ${data.ultimoError ?? "sin detalle"}`,
+          });
+        }
+      } catch {
+        // Un fallo de la consulta no cambia nada: se vuelve a intentar en el
+        // próximo tick.
+      }
+    };
+
+    consultar();
+    const temporizador = setInterval(consultar, 45_000);
+    return () => {
+      cancelado = true;
+      clearInterval(temporizador);
+    };
+  }, [vista]);
+
   let contenido: React.ReactNode;
 
   if (vista.tipo === "carga") {
@@ -1105,6 +1195,43 @@ export default function Home() {
           <p key={vista.mensaje} className="animate-fade-in-up text-[13px] text-muted">
             {vista.mensaje}
           </p>
+        </div>
+      </div>
+    );
+  } else if (vista.tipo === "encolado") {
+    contenido = (
+      <div className="h-pantalla flex items-center justify-center px-6">
+        <div className="max-w-md animate-scale-in rounded-xl border border-severidad-alta/30 bg-severidad-altaTint px-5 py-4 shadow-elevated">
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface text-severidad-alta shadow-soft">
+              <IconoAlerta />
+            </span>
+            <div className="min-w-0">
+              <p className="text-[13px] font-medium text-severidad-alta">
+                El análisis quedó en cola
+              </p>
+              <p className="mt-1 text-[12.5px] leading-relaxed text-severidad-alta/80">
+                {vista.mensaje}
+              </p>
+              {estadoTrabajo && estadoTrabajo.intentos > 0 && (
+                <p className="mt-2 text-[11.5px] leading-snug text-severidad-alta/70">
+                  Reintentos hechos: {estadoTrabajo.intentos}.
+                  {estadoTrabajo.ultimoError ? ` Último error: ${estadoTrabajo.ultimoError.split("\n")[0]}` : ""}
+                </p>
+              )}
+              <p className="mt-2 text-[11.5px] leading-snug text-severidad-alta/70">
+                Podés dejar esta pestaña abierta y la revisión se abre sola cuando termine. Si la
+                cerrás, el trabajo sigue igual en el servidor: al volver a subir el mismo documento
+                lo vas a recibir al instante, sin gastar otra llamada.
+              </p>
+              <button
+                onClick={() => setVista({ tipo: "carga" })}
+                className="mt-3 rounded text-[12px] font-medium text-severidad-alta underline decoration-severidad-alta/40 underline-offset-2 transition-opacity hover:opacity-70 active:scale-95"
+              >
+                Volver al inicio
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     );

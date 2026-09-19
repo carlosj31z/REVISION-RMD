@@ -21,6 +21,7 @@ import {
 import { extraerTextoPDF, parsearEstructuraRMD } from "@/lib/pdfExtractor";
 import { buscarRevisionEnCache, huellaEntrada, huellaParaGuardar } from "@/lib/cacheRevisiones";
 import { decidirAdjuntarPdfRmd } from "@/lib/adjuntarPdf";
+import { encolarSiElTiempoLoResuelve } from "@/lib/colaTrabajos";
 import type { RMDExtraido, ResultadoRevisionIA } from "@/types/rmd";
 
 export const runtime = "nodejs";
@@ -38,6 +39,10 @@ interface RevisionRequestBody {
   // Análisis a fondo: adjunta el PDF al modelo aunque el parseo se vea
   // completo (ver decidirAdjuntarPdfRmd). Cuesta bastante más cuota.
   forzarPdf?: boolean;
+  // Lo pone el worker de la cola al reintentar un trabajo: le dice a esta ruta
+  // que si vuelve a fallar NO lo encole de nuevo, porque la reprogramación la
+  // lleva el worker (ver /api/trabajos/procesar).
+  _trabajoId?: string;
 }
 
 /**
@@ -155,15 +160,30 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 2. Comparación con Gemini
-    const resultadoIA = await compararRMDvsControlCambios({
-      rmdVigente: body.rmdVigente,
-      pdfVigenteBase64: decisionPdf.adjuntar ? body.pdfVigenteBase64 : undefined,
-      controlDeCambioTexto: body.controlDeCambioTexto,
-      pdfControlCambioBase64: body.pdfControlCambioBase64,
-      equiposMaestro,
-      reglas: reglasLibres,
-    });
+    // 2. Comparación con Gemini. Si los cinco proveedores están saturados o sin
+    //    cuota, el trabajo queda en cola con su entrada completa y se reintenta
+    //    solo, en vez de devolverle un error al analista (ver colaTrabajos.ts).
+    let resultadoIA: ResultadoRevisionIA;
+    try {
+      resultadoIA = await compararRMDvsControlCambios({
+        rmdVigente: body.rmdVigente,
+        pdfVigenteBase64: decisionPdf.adjuntar ? body.pdfVigenteBase64 : undefined,
+        controlDeCambioTexto: body.controlDeCambioTexto,
+        pdfControlCambioBase64: body.pdfControlCambioBase64,
+        equiposMaestro,
+        reglas: reglasLibres,
+      });
+    } catch (err) {
+      const encolado = await encolarSiElTiempoLoResuelve(supabase, err, {
+        operacion: "revision",
+        payload: body as unknown as Record<string, unknown>,
+        huella,
+        creadoPor: body.creadoPor,
+        yaEsReintento: Boolean(body._trabajoId),
+      });
+      if (encolado) return NextResponse.json({ encolado: true, ...encolado }, { status: 202 });
+      throw err;
+    }
 
     // 2a. Reglas de reemplazo de término: búsqueda determinística, no depende
     //     de que el modelo no se saltee ninguna.
