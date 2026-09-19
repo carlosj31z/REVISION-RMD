@@ -181,6 +181,8 @@ Estas son las decisiones, ordenadas por lo que ahorran:
 | **Reglas de término verificadas sin modelo** | `src/lib/reglasReemplazo.ts` | Esas reglas salen del prompt y no se pueden pasar por alto |
 | **El PDF crudo se adjunta sólo si el parseo quedó corto** | `src/lib/adjuntarPdf.ts` | Menos tokens por llamada en las rutas que sí usan el modelo |
 | **Se saltea el modelo si los documentos son idénticos** | `/api/revision-borrador` | Cero llamadas cuando no hay nada que interpretar |
+| **Cuatro verificaciones de coherencia hechas por código** | `src/lib/coherenciaRmd.ts` | Salen del prompt (~600 tokens menos) y ya no dependen de que el modelo no se distraiga |
+| **El maestro de equipos viaja acotado al documento** | `src/lib/maestroEquipos.ts` | Con un maestro grande, cientos de líneas menos por llamada |
 
 `/api/estado-ia` muestra cuántas llamadas se ahorraron por caché. Para ver
 dónde se va la cuota realmente:
@@ -207,6 +209,37 @@ seguiría devolviéndose sin su alerta.
 
 `REVISION_CACHE_OFF=1` la apaga. Si la migración `0012` no se aplicó, la caché
 se desactiva sola en vez de romper el guardado.
+
+### Coherencia: qué verifica el código y qué el modelo
+
+Cuatro alertas de coherencia las calcula `coherenciaRmd.ts` y los prompts
+piden explícitamente **no** reportarlas, así que no hay duplicados:
+
+| Alerta | Cómo se verifica |
+| --- | --- |
+| `referencia_cruzada_rota` | Citas internas ("según el paso 4.2.5") contra los pasos que existen. Exige la palabra clave para no confundir una cita con cualquier número con puntos, y acepta la cita a una subsección que sí tiene pasos |
+| `equipo_sin_preparacion_registrada` | Cada ítem de la sección 1 contra el texto de todos los pasos, por código o por contención de sus palabras distintivas |
+| `nota_vb_faltante` | El campo `requiereVB` contra las dos partes irreemplazables de la nota, no la frase completa: una redacción equivalente no cuenta como faltante |
+| `cantidad_insumo_no_cuadra` | Suma las cantidades del procedimiento por insumo y las compara contra la sección 2, con conversión de unidades y 0,5% de tolerancia |
+
+Son justo las que un modelo hace peor: sumar doce cantidades sin equivocarse,
+recorrer treinta equipos sin saltarse ninguno, confirmar una nota literal.
+
+El cuadre de cantidades es deliberadamente conservador y **se abstiene** si
+algún paso menciona el insumo sin cantidad, si un paso menciona dos insumos a
+la vez, o si un paso trae dos cantidades de la misma dimensión: ahí no se puede
+saber qué número va con qué insumo, y un falso "no cuadra" en un documento GMP
+es peor que no decir nada. También descarta unidades compuestas — "34 KG/CM2"
+es una presión, no una masa.
+
+**Detalle de lectura de cantidades:** en estos RMD el separador decimal es el
+punto y las cantidades de insumo se escriben con tres decimales, así que
+"5.250 kg" son 5,25 kg y no 5250 kg. Lo confirma `# Decimales = 3` en la
+configuración de los campos de insumo del sistema digital.
+
+De la regla de citas cruzadas, al modelo le queda la mitad que sí necesita
+criterio: que el paso citado exista lo verifica el código; que su **contenido**
+siga correspondiendo a lo que la cita da a entender sigue siendo suyo.
 
 ### Qué sigue necesitando el modelo, y por qué
 
