@@ -542,22 +542,22 @@ export default function Home() {
           extraerRMD(input.rmdReferenciaFile, "el RMD de referencia"),
         ]);
         const estructura = datos.estructura;
-        const pdfBase64 = datos.pdfBase64;
         registrarAviso(datos, "El RMD a evaluar");
 
         const estructuraReferencia = datosReferencia.estructura;
-        const pdfReferenciaBase64 = datosReferencia.pdfBase64;
         registrarAviso(datosReferencia, "El RMD de referencia");
 
         setVista({ tipo: "cargando", mensaje: "Comparando y buscando pasos homologables…" });
+        // Los PDF crudos ya no se mandan: esta comparación es determinística
+        // (ver comparadorRmd/homologacion.ts) y trabaja sobre la estructura
+        // extraída, así que enviarlos en base64 sería cargar la request con
+        // varios MB que nadie lee.
         const revisionRes = await fetch("/api/revision-referencia", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             rmd: estructura,
-            pdfBase64,
             rmdReferencia: estructuraReferencia,
-            pdfReferenciaBase64,
           }),
         });
         if (!revisionRes.ok) {
