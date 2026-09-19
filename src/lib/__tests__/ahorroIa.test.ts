@@ -1,0 +1,150 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { huellaEntrada } from "../cacheRevisiones";
+import { decidirAdjuntarPdfRmd } from "../adjuntarPdf";
+import type { RMDExtraido } from "@/types/rmd";
+
+// Las dos piezas que bajan el consumo de cuota sin cambiar lo que el modelo
+// devuelve: la huella con la que se reconoce una entrada ya analizada, y la
+// decisión de adjuntar o no el PDF crudo.
+
+/** RMD parseado completo: el caso en que el PDF no hace falta. */
+function rmdCompleto(): RMDExtraido {
+  return {
+    encabezado: {
+      producto: "TRI AZIT 500mg TAB NUC",
+      codigo: "5000002229",
+      versionFabAlt: "2002/2",
+      edicionRegManuf: 6,
+      estado: "Autorizado",
+      fechaEstado: "2026-01-15",
+      autorizadoPor: "QA",
+      teorico: "100000 TAB",
+    },
+    precauciones: ["USAR EL UNIFORME COMPLETO"],
+    notasImportantes: ["RESPETAR LAS TEMPERATURAS INDICADAS"],
+    equiposInstrumentos: [{ descripcion: "MOLINO FITZ MILL", codigo: "10001704" }],
+    insumos: [{ descripcion: "AZITROMICINA", codigo: "1000000370", cantidad: "50.000", um: "kg" }],
+    condicionesAmbientales: ["TEMPERATURA (15 °C - 25 °C)"],
+    procedimiento: Array.from({ length: 20 }, (_, i) => ({
+      id: `4.4.${i + 1}`,
+      texto: `PASO NUMERO ${i + 1} CON TEXTO SUFICIENTEMENTE LARGO PARA SER REAL`,
+      requiereVB: false,
+    })),
+    documentosReferenciados: [{ codigo: "IPRO-P212", tipo: "Instructivo", area: "PRO" }],
+    paginasSeccionesGenerales: {},
+  };
+}
+
+describe("huellaEntrada", () => {
+  it("da la misma huella para la misma entrada, sin importar el orden de las claves", () => {
+    const a = huellaEntrada({ rmd: { pasos: 3, producto: "X" }, reglas: [] });
+    const b = huellaEntrada({ reglas: [], rmd: { producto: "X", pasos: 3 } });
+    assert.equal(a, b);
+  });
+
+  it("cambia si cambia cualquier parte de la entrada", () => {
+    const base = { rmd: rmdCompleto(), reglas: [], cc: "cambiar el paso 4.4.3" };
+    const huella = huellaEntrada(base);
+
+    assert.notEqual(huella, huellaEntrada({ ...base, cc: "cambiar el paso 4.4.4" }));
+    assert.notEqual(huella, huellaEntrada({ ...base, reglas: [{ id: "r1", texto: "X por Y" }] }));
+  });
+
+  it("distingue maestros distintos que llegan como Map", () => {
+    // Object.entries() de un Map devuelve siempre [], así que sin tratar el
+    // Map aparte dos maestros distintos hashearían igual y la caché
+    // devolvería el resultado de otro documento.
+    const vacio = new Map<string, unknown>();
+    const conUno = new Map<string, unknown>([["FPRO-201", { vigenteHasta: "2026-01-01" }]]);
+    const conOtro = new Map<string, unknown>([["FPRO-201", { vigenteHasta: "2027-01-01" }]]);
+
+    const h1 = huellaEntrada({ documentosVigentes: vacio });
+    const h2 = huellaEntrada({ documentosVigentes: conUno });
+    const h3 = huellaEntrada({ documentosVigentes: conOtro });
+
+    assert.notEqual(h1, h2);
+    assert.notEqual(h2, h3);
+  });
+
+  it("ignora el orden en que el maestro vino de la consulta", () => {
+    // El orden de inserción de un Map depende del orden de filas que devolvió
+    // Supabase, que no está garantizado: no puede cambiar la huella.
+    const unOrden = new Map([
+      ["A", 1],
+      ["B", 2],
+    ]);
+    const otroOrden = new Map([
+      ["B", 2],
+      ["A", 1],
+    ]);
+    assert.equal(
+      huellaEntrada({ maestro: unOrden }),
+      huellaEntrada({ maestro: otroOrden })
+    );
+  });
+
+  it("trata undefined y una clave ausente como lo mismo", () => {
+    assert.equal(huellaEntrada({ a: 1, b: undefined }), huellaEntrada({ a: 1 }));
+  });
+
+  it("no confunde un null con un string vacío ni con un cero", () => {
+    const conNull = huellaEntrada({ cc: null });
+    assert.notEqual(conNull, huellaEntrada({ cc: "" }));
+    assert.notEqual(conNull, huellaEntrada({ cc: 0 }));
+  });
+});
+
+describe("decidirAdjuntarPdfRmd", () => {
+  it("no adjunta el PDF cuando el parseo trajo todo", () => {
+    const decision = decidirAdjuntarPdfRmd(rmdCompleto());
+    assert.equal(decision.adjuntar, false);
+    assert.match(decision.motivo, /20 pasos y todas las secciones esperadas/);
+  });
+
+  it("adjunta el PDF si se detectaron pocos pasos", () => {
+    const rmd = rmdCompleto();
+    rmd.procedimiento = rmd.procedimiento.slice(0, 5);
+    const decision = decidirAdjuntarPdfRmd(rmd);
+    assert.equal(decision.adjuntar, true);
+    assert.match(decision.motivo, /sólo 5 pasos/);
+  });
+
+  it("adjunta el PDF si falta cualquiera de las secciones esperadas", () => {
+    for (const campo of [
+      "equiposInstrumentos",
+      "insumos",
+      "precauciones",
+      "notasImportantes",
+      "condicionesAmbientales",
+    ] as const) {
+      const rmd = rmdCompleto();
+      (rmd[campo] as unknown[]) = [];
+      const decision = decidirAdjuntarPdfRmd(rmd);
+      assert.equal(decision.adjuntar, true, `debería adjuntar si falta ${campo}`);
+    }
+  });
+
+  it("adjunta el PDF si muchos pasos quedaron con texto sospechosamente corto", () => {
+    const rmd = rmdCompleto();
+    // 5 de 20 (25%) por encima del 15% que se tolera.
+    for (let i = 0; i < 5; i++) rmd.procedimiento[i].texto = "OK";
+    const decision = decidirAdjuntarPdfRmd(rmd);
+    assert.equal(decision.adjuntar, true);
+    assert.match(decision.motivo, /5 de 20 pasos con texto muy corto/);
+  });
+
+  it("tolera algún paso corto aislado sin mandar el PDF", () => {
+    const rmd = rmdCompleto();
+    // 2 de 20 (10%) está dentro de lo esperable: hay pasos que son un título.
+    rmd.procedimiento[0].texto = "OK";
+    rmd.procedimiento[1].texto = "SI";
+    assert.equal(decidirAdjuntarPdfRmd(rmd).adjuntar, false);
+  });
+
+  it("adjunta siempre si el analista pidió análisis a fondo", () => {
+    const decision = decidirAdjuntarPdfRmd(rmdCompleto(), true);
+    assert.equal(decision.adjuntar, true);
+    assert.match(decision.motivo, /explícitamente/);
+  });
+});
