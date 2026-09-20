@@ -10,6 +10,7 @@ import { PanelDiferenciasBorrador } from "@/components/PanelDiferenciasBorrador"
 import { PanelHomologacionReferencia } from "@/components/PanelHomologacionReferencia";
 import { ModalVisorBorrador } from "@/components/ModalVisorBorrador";
 import { PanelReglas } from "@/components/PanelReglas";
+import { PanelComparadorConfiguracion } from "@/components/PanelComparadorConfiguracion";
 import { PanelDocumentosObsoletos } from "@/components/PanelDocumentosObsoletos";
 import { PanelEquiposCalificados } from "@/components/PanelEquiposCalificados";
 import { PanelNomenclaturas } from "@/components/PanelNomenclaturas";
@@ -132,6 +133,7 @@ type VistaActual =
   | { tipo: "documentosObsoletos" }
   | { tipo: "equiposCalificados" }
   | { tipo: "nomenclaturas" }
+  | { tipo: "comparadorConfiguracion" }
   | { tipo: "cargando"; mensaje: string }
   | { tipo: "error"; mensaje: string }
   // Los proveedores de IA estaban saturados o sin cuota: el análisis quedó en
@@ -1106,6 +1108,10 @@ export default function Home() {
               onClick={() => setVista({ tipo: "equiposCalificados" })}
               label="Equipos calificados"
             />
+            <BotonConfig
+              onClick={() => setVista({ tipo: "comparadorConfiguracion" })}
+              label="Comparador de Configuración"
+            />
             <EstadoIA />
             <ToggleTema />
           </div>
@@ -1174,6 +1180,8 @@ export default function Home() {
     contenido = <PanelEquiposCalificados onVolver={() => setVista({ tipo: "carga" })} />;
   } else if (vista.tipo === "nomenclaturas") {
     contenido = <PanelNomenclaturas onVolver={() => setVista({ tipo: "carga" })} />;
+  } else if (vista.tipo === "comparadorConfiguracion") {
+    contenido = <PanelComparadorConfiguracion onVolver={() => setVista({ tipo: "carga" })} />;
   } else if (vista.tipo === "cargando") {
     contenido = (
       <div className="h-pantalla flex items-center justify-center">
