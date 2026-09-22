@@ -148,7 +148,7 @@ Se te va a indicar un RANGO DE PÁGINAS. Transcribí ÚNICAMENTE el contenido de
 
 6. **Sección 2 (INSUMOS) completa y fiel.** Transcribí cada fila con su descripción, código, cantidad y unidad EXACTAS como figuran, incluyendo separadores de miles y decimales tal cual se leen (ej. "12 468.000", "0.052"). Estas cifras se usan después para cuadrarlas contra el procedimiento: un dígito mal transcripto genera una alerta falsa.
 
-7. **Documentos referenciados.** Recogé todo código con la forma <I|P|F><3 letras de área>-<letra opcional><3 dígitos> (ej. "IPRO-P123", "FPRO-205", "PDSG-202") que aparezca en cualquier parte del documento. "tipo" sale de la primera letra: I=Instructivo, P=Procedimiento, F=Formato. "area" son las 3 letras siguientes.
+7. **Documentos referenciados.** Recogé todo código con la forma <I|P|F><3 caracteres de área>-<letra opcional><3 dígitos> (ej. "IPRO-P123", "FPRO-205", "PDSG-202") que aparezca en cualquier parte del documento. "tipo" sale de la primera letra: I=Instructivo, P=Procedimiento, F=Formato. "area" son los 3 caracteres siguientes: normalmente 3 letras, pero áreas como Gran Volumen/Pequeño Volumen llevan un dígito en la 3ª posición ("GV1", "GV2", "PV1", "PV2" — ej. "FGV1-203", "IGV1-E201").
 
 8. **La sección 6 (VERIFICACION DE FIRMAS) se ignora por completo.** No la transcribas ni la menciones.
 

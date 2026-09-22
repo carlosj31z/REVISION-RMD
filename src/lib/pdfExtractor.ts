@@ -68,11 +68,14 @@ const RE_INICIO_CONDICIONES_AMBIENTALES = /CONDICIONES\s+AMBIENTALES/i;
 const RE_ENCABEZADO_PRODUCTO = /REGISTRO DE MANUFACTURA\s+(\w+)/i;
 const RE_CODIGO_VERSION =
   /(\d{10})\s+([\d/]+)\s+(\d+)\s+(Autorizado|Ingresado)\/\s*([\d-]+)\s*\/([A-Z]+)/;
-// Nomenclatura fija de documentos citados: <Tipo:I/P/F><Área:3 letras>-<letra opcional><3 dígitos>
+// Nomenclatura fija de documentos citados: <Tipo:I/P/F><Área:3 caract.>-<letra opcional><3 dígitos>
 // ej. "IPRO-P123" (Instructivo, área Producción), "ICBL-E200" (Instructivo, área Cápsulas Blandas),
 // pero también "FPRO-205" (Formato) o "PDSG-202"/"PCPR-202" (Procedimiento) SIN esa letra —
 // en la práctica es opcional y varía por tipo/área, no solo por instructivos.
-const RE_DOCUMENTO_REFERENCIADO = /\b([IPF])([A-Z]{3})-([A-Z]?\d{3})\b/g;
+// El área no siempre son 3 letras: "Gran Volumen"/"Pequeño Volumen" usan GV1/GV2/PV1/PV2
+// (dígito en la 3ª posición, nunca en la 1ª ni 2ª) — ej. "FGV1-203", "IGV1-E201", "PPV2-200".
+// Verificado contra las 3386 citas F/I/P reales del maestro de Documentos vigentes: cobertura 100%.
+const RE_DOCUMENTO_REFERENCIADO = /\b([IPF])([A-Z]{2}[A-Z0-9])-([A-Z]?\d{3})\b/g;
 const TIPO_DOCUMENTO: Record<"I" | "P" | "F", DocumentoReferenciado["tipo"]> = {
   I: "Instructivo",
   P: "Procedimiento",

@@ -73,12 +73,14 @@ export interface PasoProcedimiento {
 }
 
 // Instructivo (I), Procedimiento (P) o Formato (F) citado dentro del RMD.
-// Nomenclatura fija: <Tipo:1 letra><Área:3 letras>-<letra><3 dígitos>
+// Nomenclatura fija: <Tipo:1 letra><Área:3 caract.>-<letra opcional><3 dígitos>
 // ej. "IPRO-P123" (Instructivo, área Producción), "ICBL-E200" (Instructivo, área Cápsulas Blandas).
+// El área normalmente son 3 letras, pero Gran Volumen/Pequeño Volumen usan un dígito en la
+// 3ª posición: "GV1", "GV2", "PV1", "PV2" (ej. "FGV1-203").
 export interface DocumentoReferenciado {
   codigo: string; // código completo tal como aparece, ej. "ICBL-E200"
   tipo: "Instructivo" | "Procedimiento" | "Formato";
-  area: string; // las 3 letras de área, ej. "CBL", "PRO", "ACO"
+  area: string; // los 3 caracteres de área, ej. "CBL", "PRO", "ACO", "GV1"
   // Paso del procedimiento donde aparece esta cita (el primero que la
   // contiene), o null si no se encontró dentro de ningún paso — permite
   // saltar y resaltar la cita exacta en el PDF si el código termina
